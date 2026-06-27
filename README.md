@@ -2,28 +2,43 @@
 
 Your own AI assistant. Runs on your machine, with your keys, on your terms.
 
-## Quick Start
+## Install
 
 ```bash
-pip install -e .
-cp .env.example .env
-# Edit .env — add OPENROUTER_API_KEY (get free key at openrouter.ai/keys)
-crow
+curl -fsSL https://raw.githubusercontent.com/USER/crow-agent/main/install.sh | bash
 ```
 
-Open http://localhost:8000. Chat. Done.
+That's it. The script handles Python checks, venv, clone, and install.
 
-**That's it.** No signup. No subscription. No vendor lock.
+When it finishes, `crow` starts the web UI at http://localhost:8000.
+
+**No key?** The first-run setup page lets you paste one. Get a free key at [openrouter.ai/keys](https://openrouter.ai/keys).
+
+## Other ways to install
+
+```bash
+# Manual (if you prefer pip)
+git clone https://github.com/USER/crow-agent
+cd crow-agent
+pip install -e .
+cp .env.example .env
+crow
+
+# Windows (PowerShell)
+git clone https://github.com/USER/crow-agent
+cd crow-agent
+python -m venv .venv
+.venv\Scripts\pip install -e .
+.venv\Scripts\crow
+```
 
 ## What You Need
 
 | Key | Required | Where to get it |
 |---|---|---|
-| `OPENROUTER_API_KEY` | Yes | [openrouter.ai/keys](https://openrouter.ai/keys) — free tier available |
+| `OPENROUTER_API_KEY` | Yes | [openrouter.ai/keys](https://openrouter.ai/keys) — free tier |
 | `TELEGRAM_TOKEN` | No | [@BotFather](https://t.me/BotFather) on Telegram |
-| `HF_API_KEY` | No | [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) — for image generation |
-
-You can also use any OpenAI-compatible API by setting `{NAME}_API_KEY`, `{NAME}_BASE_URL`, `{NAME}_MODEL` — Crow auto-detects them.
+| `HF_API_KEY` | No | [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) — image gen |
 
 ## What It Does
 
