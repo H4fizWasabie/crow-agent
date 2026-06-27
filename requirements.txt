@@ -1,0 +1,20 @@
+# Core (required)
+httpx>=0.28
+pyyaml>=6.0
+tiktoken>=0.9
+fastapi>=0.115
+uvicorn[standard]>=0.34
+jinja2>=3.1
+python-multipart>=0.0.20
+python-dotenv>=1.1
+python-telegram-bot>=20
+paramiko>=3.5
+
+# Tools (recommended — file conversion, web scraping)
+PyMuPDF==1.27.2.3
+scrapling==0.4.9
+numpy
+requests
+
+# YouTube transcription (recommended)
+youtube-transcript-api>=1.2

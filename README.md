@@ -20,7 +20,7 @@ When it finishes, `crow` starts the web UI at http://localhost:8000.
 # Manual (if you prefer pip)
 git clone https://github.com/USER/crow-agent
 cd crow-agent
-pip install -e .
+pip install -r requirements.txt   # or: pip install -e .
 cp .env.example .env
 crow
 
