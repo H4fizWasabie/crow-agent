@@ -1,0 +1,40 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0
+rootdir: /opt/crow-agent
+configfile: pyproject.toml
+plugins: mock-3.15.1, anyio-4.12.1, langsmith-0.8.16, asyncio-1.4.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 240 items
+
+tests/test_compose_email.py .....                                        [  2%]
+tests/test_context_mgmt.py ....                                          [  3%]
+tests/test_crew.py .........                                             [  7%]
+tests/test_cron_engine.py ......                                         [ 10%]
+tests/test_crow_capabilities.py ..................................       [ 24%]
+tests/test_embeddings.py ........                                        [ 27%]
+tests/test_extension_system.py .........                                 [ 31%]
+tests/test_gmail_audit.py ..                                             [ 32%]
+tests/test_heartbeat_engine.py ................                          [ 38%]
+tests/test_heartbeat_initiative.py ...                                   [ 40%]
+tests/test_item_trace.py .....                                           [ 42%]
+tests/test_memory_tracker.py ....                                        [ 43%]
+tests/test_parse_xml_tools.py .....                                      [ 45%]
+tests/test_phase4_draft.py .........                                     [ 49%]
+tests/test_phase5_alerts.py .......                                      [ 52%]
+tests/test_procurement_extension.py .......                              [ 55%]
+tests/test_procurement_pdf.py ........                                   [ 58%]
+tests/test_procurement_tools.py .................                        [ 65%]
+tests/test_project_memory.py ....                                        [ 67%]
+tests/test_pymupdf_tool.py ...                                           [ 68%]
+tests/test_scrapling_tool.py ..                                          [ 69%]
+tests/test_simplified_loop.py .....                                      [ 71%]
+tests/test_skills_system.py .....                                        [ 73%]
+tests/test_smoke_critical.py .....                                       [ 75%]
+tests/test_state_machine.py ..........                                   [ 80%]
+tests/test_task_registry.py .................                            [ 87%]
+tests/test_telegram_rich.py ......                                       [ 89%]
+tests/test_tool_registry.py .....                                        [ 91%]
+tests/test_use_cases.py .............                                    [ 97%]
+tests/test_youtube_transcribe.py .......                                 [100%]
+
+============================= 240 passed in 55.18s =============================

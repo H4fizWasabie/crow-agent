@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crow Agent — Flow & Mechanism</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0d1117; color: #c9d1d9; font: 14px/1.6 -apple-system, BlinkMacSystemFont, sans-serif; padding: 30px; }
+h1 { color: #f0f6fc; font-size: 24px; margin-bottom: 4px; }
+h2 { color: #f0883e; font-size: 18px; margin: 32px 0 12px 0; border-bottom: 1px solid #21262d; padding-bottom: 6px; }
+.sub { color: #8b949e; margin-bottom: 30px; font-size: 13px; }
+
+/* Flow rows */
+.flow { display: flex; align-items: center; gap: 0; flex-wrap: wrap; margin: 12px 0; }
+.node { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 8px 14px; text-align: center; font-size: 13px; white-space: nowrap; }
+.node.entry { border-color: #58a6ff; }
+.node.entry .n { color: #58a6ff; font-weight: 600; }
+.node.state { border-color: #7ee787; }
+.node.state .n { color: #7ee787; font-weight: 600; font-family: monospace; }
+.node.guard { border-color: #f0883e; }
+.node.guard .n { color: #f0883e; font-weight: 600; }
+.node.tool { border-color: #a371f7; }
+.node.tool .n { color: #a371f7; font-weight: 600; }
+.node.out { border-color: #8b949e; }
+.node.out .n { color: #8b949e; font-weight: 600; }
+.node .d { color: #484f58; font-size: 11px; margin-top: 2px; }
+
+.arrow { color: #30363d; font-size: 16px; padding: 0 4px; }
+.arrow.down { display: block; text-align: center; font-size: 18px; padding: 4px 0; }
+.vflow { display: flex; flex-direction: column; align-items: center; }
+
+/* Guardrail box */
+.guard-box { background: #1a1f2b; border: 1px solid #f0883e; border-radius: 8px; padding: 14px 20px; margin: 12px 0; max-width: 700px; }
+.guard-box .title { color: #f0883e; font-weight: 600; margin-bottom: 8px; }
+.guard-box .rule { font-size: 13px; padding: 3px 0; }
+.guard-box .rule .r { color: #f0883e; }
+.guard-box .rule .v { color: #8b949e; }
+
+/* Detail box */
+.detail { background: #161b22; border: 1px solid #21262d; border-radius: 6px; padding: 12px 16px; margin: 8px 0; font-size: 13px; max-width: 700px; }
+
+/* Code inline */
+code { background: #1a2332; padding: 1px 6px; border-radius: 3px; font-size: 12px; color: #7ee787; }
+
+.footer { margin-top: 50px; text-align: center; color: #484f58; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>Crow Agent — Flow & Mechanism</h1>
+<p class="sub">How a user message becomes a completed task — every mechanism, guardrail, and execution path.</p>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2>1. User Message Flow (Primary Path)</h2>
+
+<div class="vflow">
+  <div class="node entry"><div class="n">Telegram / Web UI / CLI</div><div class="d">User sends message</div></div>
+  <div class="arrow down">▼</div>
+  <div class="node entry"><div class="n">Trigger(source=USER, prompt="...")</div><div class="d">Wrapped in Trigger dataclass</div></div>
+  <div class="arrow down">▼</div>
+  <div class="node state"><div class="n">RECALL</div><div class="d">FTS5 search + semantic embeddings + vault keyword match</div></div>
+  <div class="arrow down">▼</div>
+  <div class="node state"><div class="n">ASSEMBLE</div><div class="d">Tiered context budget: 35K tokens (required → high → low)</div></div>
+  <div class="arrow down">▼</div>
+  <div class="node state"><div class="n">CALL</div><div class="d">LLM provider (opencode-go, deepseek-v4-flash)</div></div>
+  <div class="arrow down">▼</div>
+  <div class="flow">
+    <div class="node state"><div class="n">TOOL_LOOP</div><div class="d">Execute tool calls, append results, re-call LLM</div></div>
+    <div class="arrow">⟳</div>
+    <div class="node guard"><div class="n">Guardrails</div><div class="d">Coaching signals + circuit breakers</div></div>
+  </div>
+  <div class="arrow down">▼</div>
+  <div class="node state"><div class="n">RESPOND</div><div class="d">Save to DB, auto-verify code changes, memory tracker</div></div>
+  <div class="arrow down">▼</div>
+  <div class="node out"><div class="n">IDLE</div><div class="d">Wait for next trigger</div></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2>2. Internal Monologue</h2>
+
+<div class="detail">
+  <strong>Text without tools = context, not response.</strong> When the LLM writes text without calling a tool, it's treated as internal thinking — appended as an assistant message in the conversation. The LLM sees its own analysis on the next round and builds on it. The user never sees intermediate text. Turn only ends when tools are exhausted, hard ceiling is hit (round 12), or tool limit reached (15).
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2>3. Tool Loop Guardrails (applied every round)</h2>
+
+<div class="guard-box">
+  <div class="title">apply_guardrails() — tool_loop_guard.py</div>
+  <div class="rule"><span class="r">Round 2:</span> <span class="v">Parallel nudge — "batch independent tool calls"</span></div>
+  <div class="rule"><span class="r">Round 3:</span> <span class="v">Think-in-code nudge — "write ONE run_script, not 10 reads"</span></div>
+  <div class="rule"><span class="r">Round 4:</span> <span class="v">Delegation offer — "use delegate_task for background work"</span></div>
+  <div class="rule"><span class="r">Round 8:</span> <span class="v">Wrap-up nudge — "finish within 2 more rounds"</span></div>
+  <div class="rule"><span class="r">Round 12:</span> <span class="v">Hard ceiling — force stop, return partial results</span></div>
+  <div class="rule"><span class="r">Tool cap:</span> <span class="v">MAX_TOOLS_PER_TURN = 15 — end turn</span></div>
+  <div class="rule"><span class="r">Token burn:</span> <span class="v">>300K tokens — circuit breaker, respond now</span></div>
+  <div class="rule"><span class="r">Timeout:</span> <span class="v">120s aggregate — force stop</span></div>
+</div>
+
+<div class="detail">
+  <strong>Loop detection</strong> (<code>_build_guardrail</code>): If same tool returns same error fingerprint 3x in a row → inject LOOP_DETECTED message, forbid retrying that tool. Plan anchor injected on every round: goal + tools used + last error.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2>4. Heartbeat + Initiative (Autonomous Path)</h2>
+
+<div class="vflow">
+  <div class="node entry"><div class="n">Heartbeat Tick (600s)</div><div class="d">Background asyncio loop, runs even during user chat</div></div>
+  <div class="arrow down">▼</div>
+  <div class="node state"><div class="n">Pre-Check</div><div class="d">Cheap file/env scans: git diff, pending tasks, cron health, new reports — no LLM call</div></div>
+  <div class="arrow down">▼</div>
+  <div class="node state"><div class="n">LLM Decide (opencode-zen)</div><div class="d">Cheap model decides: INFORM | NOTHING | INVESTIGATE | PROCESS | ACT</div></div>
+  <div class="arrow down">▼</div>
+  <div class="flow">
+    <div class="node tool"><div class="n">ACT</div><div class="d">Test failure, cron failure, or pending delegate detected</div></div>
+    <div class="arrow">→</div>
+    <div class="node tool"><div class="n">_spawn_initiative(goal)</div><div class="d">Creates new AIAgent with initiative_UUID session</div></div>
+  </div>
+  <div class="arrow down">▼</div>
+  <div class="node state"><div class="n">Initiative Agent Turn</div><div class="d">Full RECALL→ASSEMBLE→CALL→TOOL_LOOP→RESPOND</div></div>
+  <div class="arrow down">▼</div>
+  <div class="flow">
+    <div class="node out"><div class="n">__autonomous__ Session</div><div class="d">Stored in DB for recall</div></div>
+    <div class="arrow">+</div>
+    <div class="node out"><div class="n">Crow Log Channel</div><div class="d">[#abc123] Telegram message</div></div>
+  </div>
+</div>
+
+<div class="detail" style="margin-top:12px;">
+  <strong>Rate limits:</strong> max 2 Initiative turns/hour. Pause after 3 consecutive without user interaction. Crew delegation paused while user is chatting (<code>_heartbeat_active_turns > 0</code>).
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2>5. Task Execution Lifecycle</h2>
+
+<div class="vflow">
+  <div class="flow">
+    <div class="node entry"><div class="n">delegate_task(prompt)</div></div>
+    <div class="arrow">→</div>
+    <div class="node state"><div class="n">PENDING</div><div class="d">Stored in auto_tasks queue</div></div>
+    <div class="arrow">→</div>
+    <div class="node state"><div class="n">EXECUTING</div><div class="d">Sub-agent spawned (deep-worker profile)</div></div>
+  </div>
+  <div class="arrow down">▼</div>
+  <div class="flow">
+    <div class="node tool"><div class="n">DONE</div><div class="d">✅ Telegram notify</div></div>
+    <div class="arrow" style="padding: 0 20px;">or</div>
+    <div class="node guard"><div class="n">FAILED</div><div class="d">Auto-retry up to N times</div></div>
+  </div>
+  <div class="arrow down">▼</div>
+  <div class="node out"><div class="n">RETRYING → EXECUTING</div><div class="d">With adjusted instructions</div></div>
+</div>
+
+<div class="detail" style="margin-top:12px;">
+  <strong>Notifications:</strong> "⏳ Still working (5 min)" | "✅ Task done" | "❌ Task failed, reason". Max 2 parallel sub-agents. Serialize tasks touching same file path.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2>6. Crew System (Multi-Agent)</h2>
+
+<div class="vflow">
+  <div class="node entry"><div class="n">User request with task keywords</div><div class="d">"build", "research", "refactor", "analyze"...</div></div>
+  <div class="arrow down">▼</div>
+  <div class="node state"><div class="n">Classify</div><div class="d">Keyword trigger — zero API cost</div></div>
+  <div class="arrow down">▼</div>
+  <div class="node state"><div class="n">Decompose</div><div class="d">LLM creates JSON plan: steps + dependency graph</div></div>
+  <div class="arrow down">▼</div>
+  <div class="node tool"><div class="n">Execute (parallel by dependency level)</div><div class="d">Workers append to shared markdown scratchpad</div></div>
+  <div class="arrow down">▼</div>
+  <div class="flow">
+    <div class="node tool"><div class="n">Worker 1</div><div class="d">Researcher (web_search)</div></div>
+    <div class="node tool"><div class="n">Worker 2</div><div class="d">Coder (write_file)</div></div>
+    <div class="node tool"><div class="n">Worker 3</div><div class="d">Reviewer (read_file)</div></div>
+  </div>
+  <div class="arrow down">▼</div>
+  <div class="node out"><div class="n">Merge (free Zen key)</div><div class="d">Synthesis of all done steps → final report</div></div>
+</div>
+
+<div class="detail" style="margin-top:12px;">
+  <strong>Failure isolation:</strong> If step fails, dependents skipped. Completed results preserved. Partial merge still delivered. Workers have own SQLite sessions (self-memory via FTS5). Provider routing: per-profile primary + shared pool fallback.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2>7. Provider Failover</h2>
+
+<div class="flow">
+  <div class="node entry"><div class="n">LLM Call</div></div>
+  <div class="arrow">→</div>
+  <div class="node state"><div class="n">Primary (opencode-go)</div></div>
+  <div class="arrow">→</div>
+  <div class="node guard"><div class="n">401/403?</div><div class="d">PermanentProviderError — stop</div></div>
+  <div class="arrow">→</div>
+  <div class="node state"><div class="n">429/5xx/Timeout?</div><div class="d">Retry 3x with exponential backoff (1s, 2s)</div></div>
+  <div class="arrow">→</div>
+  <div class="node tool"><div class="n">Fallback</div><div class="d">Next of 8 backup keys</div></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2>8. Memory Pipeline</h2>
+
+<div class="flow">
+  <div class="node entry"><div class="n">Post-Turn Hook</div></div>
+  <div class="arrow">→</div>
+  <div class="node state"><div class="n">MemoryTracker.observe_turn()</div></div>
+  <div class="arrow">→</div>
+  <div class="flow" style="flex-direction:column; gap:4px;">
+    <div class="node tool"><div class="n">Auto-Capture</div><div class="d">Tool sequences, session milestones — zero LLM</div></div>
+    <div class="node tool"><div class="n">Preference Sniffer</div><div class="d">Keyword detection "prefer/prefers" — zero LLM</div></div>
+    <div class="node tool"><div class="n">Inline Extraction</div><div class="d">Every 5 turns, cheap LLM reviews preferences</div></div>
+    <div class="node tool"><div class="n">Agent-Driven</div><div class="d">learn() → log.md, remember() → wiki page</div></div>
+  </div>
+</div>
+
+<div class="footer">
+  Crow Agent — commit 70a441e — 2026-06-20<br>
+  Files: docs/architecture.html (structure) + docs/flow.html (mechanisms)
+</div>
+
+</body>
+</html>

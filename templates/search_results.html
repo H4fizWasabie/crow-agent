@@ -1,0 +1,17 @@
+{% if results %}
+<div class="search-results">
+  <h3>Results for "{{ query }}"</h3>
+  {% for r in results %}
+  <div class="search-result">
+    <div class="search-meta">
+      <a href="/sessions/{{ r.session_id }}" class="link">{{ r.session_id }}</a>
+      <span class="tag">{{ r.role }}</span>
+      <span class="muted">{{ r.created_at }}</span>
+    </div>
+    <div class="search-content">{{ r.content[:300] }}</div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="muted" style="margin-bottom:16px;">No results for "{{ query }}".</div>
+{% endif %}

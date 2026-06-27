@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Crow Agent</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+</head>
+<body>
+<div class="app-layout">
+
+  <!-- ─── Left Sidebar ─── -->
+  <aside class="left-sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-icon">C</div>
+      <span>Crow Agent</span>
+    </div>
+
+    <div class="sidebar-create">
+      <button class="btn-create" onclick="createSession()">
+        + Create Session
+      </button>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a href="/dashboard" class="nav-item {% if tab == 'dashboard' %}active{% endif %}">
+        <span class="nav-icon">📊</span> Dashboard
+      </a>
+      <a href="/activity" class="nav-item {% if tab == 'activity' %}active{% endif %}">📡 Activity</a>
+      <a href="/" class="nav-item {% if tab == 'chat' %}active{% endif %}">
+        <span class="nav-icon">💬</span> Chat
+      </a>
+      <a href="/tasks" class="nav-item {% if tab == 'tasks' %}active{% endif %}">
+        <span class="nav-icon">📋</span> Tasks
+      </a>
+      <a href="/sessions" class="nav-item {% if tab == 'sessions' %}active{% endif %}">
+        <span class="nav-icon">📂</span> Sessions
+      </a>
+      <a href="/skills" class="nav-item {% if tab == 'skills' %}active{% endif %}">
+        <span class="nav-icon">⚡</span> Skills
+      </a>
+      <a href="/cron" class="nav-item {% if tab == 'cron' %}active{% endif %}">
+        <span class="nav-icon">⏰</span> Cron Jobs
+      </a>
+      <a href="/providers" class="nav-item {% if tab == 'providers' %}active{% endif %}">
+        <span class="nav-icon">🔌</span> Providers
+      </a>
+      <a href="/team" class="nav-item {% if tab == 'team' %}active{% endif %}">
+        <span class="nav-icon">👥</span> Team
+      </a>
+    </nav>
+
+    <div class="sidebar-profile">
+      <div class="theme-selector">
+        <div class="theme-label">Theme</div>
+        <div class="theme-options">
+          <button class="theme-swatch" data-theme="light" title="Light" onclick="setTheme('light')">☀️</button>
+          <button class="theme-swatch" data-theme="dark" title="Dark" onclick="setTheme('dark')">🌙</button>
+          <button class="theme-swatch" data-theme="ember" title="Ember" onclick="setTheme('ember')">🔥</button>
+          <button class="theme-swatch" data-theme="forest" title="Forest" onclick="setTheme('forest')">🌿</button>
+          <button class="theme-swatch" data-theme="dusk" title="Dusk" onclick="setTheme('dusk')">🌸</button>
+        </div>
+      </div>
+      <div class="profile-card">
+        <div class="profile-avatar">H</div>
+        <div class="profile-info">
+          <div class="profile-name">{{ user_name if user_name else 'Crow' }}</div>
+          <div class="profile-env">
+            <span class="status-dot active"></span>
+            master
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ─── Center Canvas ─── -->
+  <main class="center-canvas">
+    <div class="view-switcher">
+      <a href="/" class="view-tab {% if tab == 'chat' %}active{% endif %}">Chat</a>
+      <a href="/tasks" class="view-tab {% if tab == 'tasks' %}active{% endif %}">Tasks</a>
+      <a href="/sessions" class="view-tab {% if tab == 'sessions' %}active{% endif %}">Sessions</a>
+      <a href="/skills" class="view-tab {% if tab == 'skills' %}active{% endif %}">Skills</a>
+      <a href="/cron" class="view-tab {% if tab == 'cron' %}active{% endif %}">Cron</a>
+      <a href="/providers" class="view-tab {% if tab == 'providers' %}active{% endif %}">Providers</a>
+      <a href="/team" class="view-tab {% if tab == 'team' %}active{% endif %}">Team</a>
+    </div>
+    <div class="canvas-content">
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+
+  <!-- ─── Right Sidebar (Context) ─── -->
+  <aside class="right-sidebar" id="right-sidebar">
+    <!-- Pane A: Task Progress -->
+    <div class="context-pane">
+      <div class="pane-header">Session Progress</div>
+      <div class="pane-body" id="progress-pane">
+        <div class="task-item done"><span class="task-check done">✓</span> Session active</div>
+        <div class="task-item" id="task-turns"><span class="task-check"></span> Turns: <span id="turn-count">—</span></div>
+        <div class="task-item" id="task-provider"><span class="task-check"></span> Provider active</div>
+      </div>
+    </div>
+
+    <!-- Pane B: Environment Context -->
+    <div class="context-pane">
+      <div class="pane-header">Environment</div>
+      <div class="pane-body" id="env-pane">
+        <div class="context-item">
+          <span class="context-label">Session</span>
+          <span class="context-value" id="ctx-session">—</span>
+        </div>
+        <div class="context-item">
+          <span class="context-label">Provider</span>
+          <span class="context-value" id="ctx-provider">—</span>
+        </div>
+        <div class="context-item">
+          <span class="context-label">Model</span>
+          <span class="context-value" id="ctx-model">—</span>
+        </div>
+        <div class="context-item">
+          <span class="context-label">Skills</span>
+          <span class="context-value" id="ctx-skills">—</span>
+        </div>
+        <div class="context-item">
+          <span class="context-label">Tokens</span>
+          <span class="context-value" id="ctx-tokens">—</span>
+        </div>
+        <div class="context-item">
+          <span class="context-label">DB</span>
+          <span class="context-value" id="ctx-db">✓ connected</span>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+</div>
+
+<script>
+// ── Utility: Create a new session ──
+function createSession() {
+  const sid = 'session-' + Date.now().toString(36);
+  // If on chat page, switch session input
+  const input = document.getElementById('session-input');
+  if (input) {
+    input.value = sid;
+    loadHistory();
+  } else {
+    window.location.href = '/?session=' + sid;
+  }
+}
+
+// ── Populate context sidebar (debounced) ──
+let _popContextTimer = null;
+async function populateContext() {
+  if (_popContextTimer) clearTimeout(_popContextTimer);
+  _popContextTimer = setTimeout(() => _doPopulate(), 300);
+}
+async function _doPopulate() {
+  // Session
+  const sid = document.getElementById('session-input')?.value;
+  if (sid) document.getElementById('ctx-session').textContent = sid;
+
+  // Provider — fetch from sessions page data or inline
+  try {
+    const provResp = await fetch('/providers');
+    const html = await provResp.text();
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const activeTag = doc.querySelector('.tag');
+    if (activeTag && activeTag.textContent === 'ACTIVE') {
+      const row = activeTag.closest('tr') || activeTag.closest('.provider-card');
+      if (row) {
+        const name = row.querySelector('strong')?.textContent;
+        const model = row.querySelector('.provider-model')?.textContent || row.querySelector('td:nth-child(2)')?.textContent;
+        if (name) document.getElementById('ctx-provider').textContent = name;
+        if (model) document.getElementById('ctx-model').textContent = model;
+        document.getElementById('task-provider').classList.add('done');
+        document.getElementById('task-provider').querySelector('.task-check').classList.add('done');
+        document.getElementById('task-provider').querySelector('.task-check').textContent = '✓';
+      }
+    }
+  } catch (_) {}
+
+  // Skills count
+  try {
+    const skillResp = await fetch('/skills');
+    const skillHtml = await skillResp.text();
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(skillHtml, 'text/html');
+    const count = doc.querySelectorAll('.skill-card').length;
+    document.getElementById('ctx-skills').textContent = count + ' loaded';
+  } catch (_) {}
+
+  // Turn count + tokens from session detail if on chat page
+  try {
+    if (sid) {
+      const [histResp, tokResp] = await Promise.all([
+        fetch('/sessions/' + encodeURIComponent(sid) + '/history'),
+        fetch('/sessions/' + encodeURIComponent(sid) + '/tokens'),
+      ]);
+      if (histResp.ok) {
+        const histHtml = await histResp.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(histHtml, 'text/html');
+        const count = doc.querySelectorAll('.msg').length;
+        document.getElementById('turn-count').textContent = count;
+        if (count > 0) {
+          document.getElementById('task-turns').classList.add('done');
+          document.getElementById('task-turns').querySelector('.task-check').classList.add('done');
+          document.getElementById('task-turns').querySelector('.task-check').textContent = '✓';
+        }
+      }
+      if (tokResp.ok) {
+        const tok = await tokResp.json();
+        document.getElementById('ctx-tokens').textContent = tok.total + ' (' + tok.prompt + '+' + tok.completion + ')';
+      }
+    }
+  } catch (_) {}
+}
+
+document.addEventListener('DOMContentLoaded', populateContext);
+
+// ── Theme management ──
+function setTheme(name) {
+  document.documentElement.setAttribute('data-theme', name);
+  localStorage.setItem('crow-theme', name);
+  document.querySelectorAll('.theme-swatch').forEach(function(el) {
+    el.classList.toggle('active', el.getAttribute('data-theme') === name);
+  });
+}
+
+(function() {
+  var saved = localStorage.getItem('crow-theme');
+  if (saved) setTheme(saved);
+})();
+</script>
+</body>
+</html>

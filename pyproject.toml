@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crow-agent"
+version = "0.1.0"
+description = "Autonomous AI agent runtime with persistent memory and procedural skills"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28",
+    "pyyaml>=6.0",
+    "tiktoken>=0.9",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.20",
+    "python-dotenv>=1.1",
+    "python-telegram-bot>=20",
+    "paramiko>=3.5",
+]
+
+[project.scripts]
+crow-agent = "crow_agent.__main__:main"
+crow = "crow_agent.web_launcher:main"
+
+[project.optional-dependencies]
+markitdown = ["markitdown[pdf,docx,pptx,xlsx]"]
+doctr = ["python-doctr[torch]"]
+youtube = ["youtube-transcript-api>=1.2"]
+tools = [
+    "PyMuPDF==1.27.2.3",
+    "scrapling==0.4.9",
+    "numpy",
+    "requests",
+]
+
+[tool.setuptools.packages.find]
+include = ["crow_agent*", "crow_agent.*"]

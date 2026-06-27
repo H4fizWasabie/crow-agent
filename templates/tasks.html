@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="tasks-page">
+  <div class="page-header">
+    <h2>Tasks</h2>
+    <div class="task-filters">
+      <a href="/tasks" class="filter-btn {% if not status %}active{% endif %}">All</a>
+      <a href="/tasks?status=pending" class="filter-btn {% if status == 'pending' %}active{% endif %}">Pending</a>
+      <a href="/tasks?status=in_progress" class="filter-btn {% if status == 'in_progress' %}active{% endif %}">In Progress</a>
+      <a href="/tasks?status=done" class="filter-btn {% if status == 'done' %}active{% endif %}">Done</a>
+    </div>
+  </div>
+
+  <div class="task-list">
+    {% for task in tasks %}
+    <div class="task-card" data-task-id="{{ task.id }}">
+      <div class="task-left">
+        <span class="task-status-badge {{ task.status }}">{{ task.status }}</span>
+        <div class="task-info">
+          <div class="task-title">{{ task.title }}</div>
+          {% if task.description %}
+          <div class="task-desc">{{ task.description }}</div>
+          {% endif %}
+          <div class="task-meta">
+            {% if task.deadline %}
+            <span class="task-deadline">⏰ {{ task.deadline }}</span>
+            {% endif %}
+            {% if task.tags %}
+            {% for tag in task.tags %}
+            <span class="task-tag">{{ tag }}</span>
+            {% endfor %}
+            {% endif %}
+            <span class="task-priority {{ task.priority }}">{{ task.priority }}</span>
+            {% if task.snoozed_until %}
+            <span class="task-snoozed">🔕 until {{ task.snoozed_until[:16] }}</span>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      <div class="task-actions">
+        {% if task.status != 'done' %}
+        <button class="btn-done" onclick="markDone('{{ task.id }}')" title="Mark done">✅</button>
+        {% endif %}
+        <button class="btn-snooze" onclick="snoozeTask('{{ task.id }}')" title="Snooze 1h">⏰</button>
+      </div>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <div class="empty-icon">📋</div>
+      <div class="empty-text">No tasks yet. Tell Crow about something you need to do!</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<style>
+.tasks-page { padding: 16px; }
+.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.task-filters { display: flex; gap: 8px; }
+.filter-btn { padding: 4px 12px; border-radius: 6px; font-size: 13px; text-decoration: none; color: var(--text); background: var(--surface); }
+.filter-btn.active { background: var(--accent); color: #fff; }
+.task-card { display: flex; justify-content: space-between; align-items: flex-start; padding: 12px; margin-bottom: 8px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); }
+.task-left { display: flex; gap: 10px; flex: 1; }
+.task-status-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; text-transform: uppercase; font-weight: 600; white-space: nowrap; }
+.task-status-badge.done { background: #16a34a20; color: #16a34a; }
+.task-status-badge.pending { background: #d9770620; color: #d97706; }
+.task-status-badge.in_progress { background: #2563eb20; color: #2563eb; }
+.task-status-badge.cancelled { background: #6b728020; color: #6b7280; }
+.task-title { font-weight: 600; font-size: 14px; }
+.task-desc { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.task-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; font-size: 11px; }
+.task-deadline { color: #d97706; }
+.task-tag { background: var(--accent-muted); padding: 1px 6px; border-radius: 4px; }
+.task-priority { padding: 1px 6px; border-radius: 4px; }
+.task-priority.high { background: #dc262620; color: #dc2626; }
+.task-priority.medium { background: #d9770620; color: #d97706; }
+.task-priority.low { background: #16a34a20; color: #16a34a; }
+.task-snoozed { color: #8b5cf6; }
+.task-actions { display: flex; gap: 4px; margin-left: 8px; }
+.btn-done, .btn-snooze { background: none; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; padding: 4px 8px; font-size: 14px; }
+.btn-done:hover, .btn-snooze:hover { background: var(--accent-muted); }
+.empty-state { text-align: center; padding: 48px 16px; color: var(--text-muted); }
+.empty-icon { font-size: 48px; margin-bottom: 12px; }
+.empty-text { font-size: 14px; }
+</style>
+
+<script>
+async function markDone(taskId) {
+  const resp = await fetch('/tasks/' + encodeURIComponent(taskId) + '/done', { method: 'POST' });
+  if (resp.ok) location.reload();
+}
+async function snoozeTask(taskId) {
+  const resp = await fetch('/tasks/' + encodeURIComponent(taskId) + '/snooze', { method: 'POST' });
+  if (resp.ok) location.reload();
+}
+</script>
+{% endblock %}

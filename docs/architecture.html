@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crow Agent — Architecture</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0d1117; color: #c9d1d9; font: 14px/1.6 -apple-system, BlinkMacSystemFont, sans-serif; padding: 40px; }
+h1 { color: #f0f6fc; font-size: 28px; margin-bottom: 8px; }
+.sub { color: #8b949e; margin-bottom: 40px; }
+
+.arch { display: flex; flex-direction: column; align-items: center; gap: 0; }
+
+/* Entry points row */
+.entry-row { display: flex; gap: 40px; justify-content: center; margin-bottom: 20px; flex-wrap: wrap; }
+.entry { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 20px; text-align: center; min-width: 150px; }
+.entry .name { color: #58a6ff; font-weight: 600; }
+.entry .desc { color: #8b949e; font-size: 12px; }
+
+/* Connector */
+.connector { display: flex; flex-direction: column; align-items: center; }
+.conn-line { width: 2px; height: 24px; background: #30363d; }
+.conn-horiz { display: flex; align-items: center; }
+.conn-horiz-line { height: 2px; background: #30363d; width: 400px; max-width: 80vw; }
+
+/* Main node */
+.main-node { background: #1a2332; border: 2px solid #58a6ff; border-radius: 12px; padding: 16px 28px; text-align: center; margin: 0 0 20px 0; max-width: 500px; }
+.main-node .name { color: #58a6ff; font-size: 20px; font-weight: 700; }
+.main-node .state { color: #7ee787; font-size: 13px; margin-top: 4px; font-family: monospace; }
+.main-node .desc { color: #8b949e; font-size: 13px; margin-top: 8px; }
+
+/* Subsystems row */
+.subsys-row { display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; margin-bottom: 20px; }
+.subsys { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px 18px; min-width: 180px; max-width: 260px; }
+.subsys .name { color: #f0883e; font-weight: 600; font-size: 15px; }
+.subsys ul { list-style: none; margin-top: 8px; }
+.subsys li { color: #8b949e; font-size: 12px; padding: 2px 0; }
+.subsys li::before { content: "▸ "; color: #30363d; }
+.subsys .t { color: #7ee787; }
+
+/* Details section */
+.details { margin-top: 40px; display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
+.card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+.card h3 { color: #f0883e; font-size: 16px; margin-bottom: 10px; }
+.card .item { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; border-bottom: 1px solid #21262d; }
+.card .item:last-child { border-bottom: none; }
+.card .item .f { color: #c9d1d9; font-family: monospace; font-size: 12px; }
+.card .item .r { color: #8b949e; font-size: 12px; }
+
+.footer { margin-top: 60px; text-align: center; color: #484f58; font-size: 12px; }
+.phase { display: inline-block; background: #1a2332; border: 1px solid #30363d; border-radius: 4px; padding: 2px 8px; margin: 2px; font-family: monospace; font-size: 12px; }
+.phase.now { border-color: #7ee787; color: #7ee787; }
+
+</style>
+</head>
+<body>
+
+<h1>Crow Agent Architecture</h1>
+<p class="sub">Autonomous AI agent runtime — state machine, heartbeat, tools, memory</p>
+
+<div class="arch">
+
+  <!-- Entry points -->
+  <div class="entry-row">
+    <div class="entry"><div class="name">Telegram Bot</div><div class="desc">@CrowAgentBot</div></div>
+    <div class="entry"><div class="name">Web UI</div><div class="desc">FastAPI / SSE</div></div>
+    <div class="entry"><div class="name">CLI</div><div class="desc">__main__.py</div></div>
+    <div class="entry"><div class="name">Cron</div><div class="desc">Scheduled jobs</div></div>
+  </div>
+
+  <div class="connector">
+    <div class="conn-line"></div>
+    <div class="conn-horiz"><div class="conn-horiz-line"></div></div>
+    <div class="conn-line"></div>
+  </div>
+
+  <!-- Core -->
+  <div class="main-node">
+    <div class="name">AIAgent (run_agent.py)</div>
+    <div class="state">
+      <span class="phase now">RECALL</span> → <span class="phase now">ASSEMBLE</span> → <span class="phase now">CALL</span> → <span class="phase now">TOOL_LOOP</span> → <span class="phase now">RESPOND</span>
+    </div>
+    <div class="desc">State machine orchestrator. Entry via Trigger (USER or HEARTBEAT source).</div>
+  </div>
+
+  <div class="connector">
+    <div class="conn-line"></div>
+    <div class="conn-horiz"><div class="conn-horiz-line"></div></div>
+    <div class="conn-line"></div>
+  </div>
+
+  <!-- Subsystems -->
+  <div class="subsys-row">
+    <div class="subsys">
+      <div class="name">Tools (50+)</div>
+      <ul>
+        <li><span class="t">run_cmd</span> — shell execution</li>
+        <li><span class="t">read_file / write_file / edit_file</span></li>
+        <li><span class="t">web_search / web_fetch</span></li>
+        <li><span class="t">delegate_task / spawn_agent</span></li>
+        <li><span class="t">git_status / git_diff</span></li>
+        <li><span class="t">extract_pdf_text</span></li>
+        <li><span class="t">grep_files / list_dir</span></li>
+        <li>Extensions: procurement, gmail, youtube, web_ui</li>
+      </ul>
+    </div>
+
+    <div class="subsys">
+      <div class="name">Memory & Context</div>
+      <ul>
+        <li>MemoryTracker — auto-capture + agent-driven</li>
+        <li>CrowState — SQLite sessions + FTS5</li>
+        <li>Context Assembler — 35K token budget</li>
+        <li>Embeddings — semantic search (OpenRouter)</li>
+        <li>Output Compressor — tool output caching</li>
+        <li>Memory Vault — Obsidian wiki</li>
+      </ul>
+    </div>
+
+    <div class="subsys">
+      <div class="name">LLM Providers</div>
+      <ul>
+        <li>opencode-go (deepseek-v4-flash) — main</li>
+        <li>opencode-zen — heartbeat + sub-agents</li>
+        <li>FailoverProvider — 3x retry, 9 keys</li>
+        <li>PermanentProviderError — 401/403 skip</li>
+      </ul>
+    </div>
+
+    <div class="subsys">
+      <div class="name">Background Engines</div>
+      <ul>
+        <li>Heartbeat — 600s tick, detect → ACT</li>
+        <li>Initiative — spawns autonomous turns</li>
+        <li>CronEngine — scheduled jobs</li>
+        <li>ReminderEngine — task reminders</li>
+        <li>Tool Loop Guard — coaching + circuit breakers</li>
+      </ul>
+    </div>
+  </div>
+
+</div>
+
+<!-- Detailed module breakdown -->
+<div class="details">
+
+  <div class="card">
+    <h3>crow_agent/ (34 modules)</h3>
+    <div class="item"><span class="f">run_agent.py</span><span class="r">AIAgent, Trigger, state machine</span></div>
+    <div class="item"><span class="f">heartbeat_engine.py</span><span class="r">Background observer + Initiative spawn</span></div>
+    <div class="item"><span class="f">telegram_bot.py</span><span class="r">Bot handler, Crow Log channel</span></div>
+    <div class="item"><span class="f">crow_state.py</span><span class="r">SQLite sessions + FTS5</span></div>
+    <div class="item"><span class="f">providers.py</span><span class="r">BaseProvider, FailoverProvider</span></div>
+    <div class="item"><span class="f">tool_loop_guard.py</span><span class="r">Coaching signals + circuit breakers</span></div>
+    <div class="item"><span class="f">context_assembler.py</span><span class="r">Tiered prompt builder (35K tokens)</span></div>
+    <div class="item"><span class="f">memory_tracker.py</span><span class="r">Auto-capture, preferences, skills</span></div>
+    <div class="item"><span class="f">crew.py</span><span class="r">Multi-agent orchestration</span></div>
+    <div class="item"><span class="f">embeddings.py</span><span class="r">Semantic search (OpenRouter)</span></div>
+    <div class="item"><span class="f">cron_engine.py</span><span class="r">Scheduled job runner</span></div>
+    <div class="item"><span class="f">reminder_engine.py</span><span class="r">Task reminder loop</span></div>
+  </div>
+
+  <div class="card">
+    <h3>Extensions (5)</h3>
+    <div class="item"><span class="f">procurement/</span><span class="r">12 tools, PO/RFQ PDF, Gmail OAuth</span></div>
+    <div class="item"><span class="f">web_ui/</span><span class="r">Activity dashboard at /ui</span></div>
+    <div class="item"><span class="f">youtube_transcribe/</span><span class="r">Captions-first, whisper fallback</span></div>
+    <div class="item"><span class="f">gmail_audit/</span><span class="r">Read-only search + drive list</span></div>
+    <div class="item"><span class="f">project_memory/</span><span class="r">Project folders in memory vault</span></div>
+  </div>
+
+  <div class="card">
+    <h3>Tests (27 files, 192 tests)</h3>
+    <div class="item"><span class="f">test_state_machine.py</span><span class="r">10/10 pass — agent loop</span></div>
+    <div class="item"><span class="f">test_heartbeat_initiative.py</span><span class="r">3/3 pass — Initiative routing</span></div>
+    <div class="item"><span class="f">test_crew.py</span><span class="r">Multi-agent tests</span></div>
+    <div class="item"><span class="f">test_procurement_*.py</span><span class="r">Procurement extension (3 files)</span></div>
+    <div class="item"><span class="f">Other (18 files)</span><span class="r">Tools, embeddings, context, skills</span></div>
+  </div>
+
+  <div class="card">
+    <h3>ADR Index</h3>
+    <div class="item"><span class="f">0001</span><span class="r">Integration-heavy test strategy</span></div>
+    <div class="item"><span class="f">0002</span><span class="r">Async background task execution</span></div>
+    <div class="item"><span class="f">0003</span><span class="r">FollowThrough Gate (removed in v2)</span></div>
+    <div class="item"><span class="f">0004</span><span class="r">Crew system architecture</span></div>
+    <div class="item"><span class="f">0005</span><span class="r">Initiative System — autonomous loop</span></div>
+  </div>
+
+</div>
+
+<div class="footer">
+  Crow Agent — commit c06eb7b — 2026-06-20<br>
+  Laptop: ~/Desktop/Crow · VPS: /opt/crow-agent · GitHub: crow-agent
+</div>
+
+</body>
+</html>

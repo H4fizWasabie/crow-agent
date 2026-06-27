@@ -1,0 +1,5 @@
+# Force GitHub language stats to show Python correctly
+*.html linguist-vendored
+*.md linguist-documentation
+*.yml linguist-vendored
+*.yaml linguist-vendored

@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h2>Providers <span class="badge">{{ providers|length }}</span></h2>
+  <button onclick="toggleAddForm()" class="btn btn-primary">+ Add Provider</button>
+</div>
+
+<!-- add provider form (hidden by default) -->
+<div id="add-form" class="card add-form-card" style="display:none;">
+  <h3>Add Provider</h3>
+  <form id="provider-form" onsubmit="addProvider(event)">
+    <div class="form-row">
+      <select name="name" id="new-name" onchange="populateModels(this.value)" required class="input">
+        <option value="">— Select provider —</option>
+        <option value="opencode-go">opencode-go</option>
+        <option value="commandcode">commandcode</option>
+        <option value="__custom__">Custom (type below)</option>
+      </select>
+      <input name="name_custom" id="new-name-custom" type="text" placeholder="custom name" class="input" style="display:none;" />
+    </div>
+    <div class="form-row">
+      <select name="model" id="new-model" class="input" style="flex:2;">
+        <option value="">— Select model —</option>
+      </select>
+      <input name="model_custom" id="new-model-custom" type="text" placeholder="custom model ID" class="input" style="display:none;flex:2;" />
+    </div>
+    <input name="base_url" id="new-base-url" type="text" placeholder="base URL" class="input" style="width:100%;margin-bottom:8px;" />
+    <input name="api_key" type="text" placeholder="API key" required class="input" style="width:100%;margin-bottom:8px;" />
+    <div class="form-row">
+      <select name="api_type" class="input">
+        <option value="openai_compat">OpenAI Compatible</option>
+      </select>
+      <button type="submit" class="btn btn-primary">Save</button>
+      <button type="button" onclick="toggleAddForm()" class="btn">Cancel</button>
+    </div>
+  </form>
+</div>
+
+<!-- provider cards -->
+{% if providers %}
+<div class="provider-grid">
+  {% for item in providers %}
+  {% set p = item.entry %}
+  {% set avail = item.available_models %}
+  <div class="provider-card" id="prov-{{ p.name }}">
+    <div class="provider-head">
+      <span class="provider-name">{{ p.name }}</span>
+      {% if p.name == active %}
+      <span class="badge" style="background:var(--green-soft);color:var(--green);">ACTIVE</span>
+      {% else %}
+      <button onclick="setActive('{{ p.name }}')" class="btn btn-sm">Set Active</button>
+      {% endif %}
+    </div>
+    <div class="provider-field">
+      <label>Model</label>
+      {% if avail %}
+      <select id="model-{{ p.name }}" class="input provider-select">
+        {% for m in avail %}
+        <option value="{{ m }}" {% if m == p.model %}selected{% endif %}>{{ m }}</option>
+        {% endfor %}
+        <option value="__custom__" {% if p.model not in avail %}selected{% endif %}>Custom…</option>
+      </select>
+      {% if p.model not in avail %}
+      <input id="model-custom-{{ p.name }}" type="text" value="{{ p.model }}" class="input provider-override" placeholder="custom model" />
+      {% endif %}
+      {% else %}
+      <input id="model-{{ p.name }}" type="text" value="{{ p.model }}" class="input" placeholder="model ID" />
+      {% endif %}
+    </div>
+    <div class="provider-field">
+      <label>Base URL</label>
+      <input id="url-{{ p.name }}" type="text" value="{{ p.base_url }}" class="input" placeholder="https://…" />
+    </div>
+    <div class="provider-field">
+      <label>API Key</label>
+      <div style="display:flex;gap:4px;">
+        <input id="key-{{ p.name }}" type="password" value="{{ p.api_key }}" class="input" style="flex:1;" />
+        <button class="btn btn-sm" onclick="toggleKey('{{ p.name }}')">👁</button>
+      </div>
+    </div>
+    <div class="provider-actions">
+      <button onclick="saveProvider('{{ p.name }}')" class="btn btn-sm btn-primary">Save</button>
+      <button onclick="deleteProvider('{{ p.name }}')" class="btn btn-sm btn-danger">Delete</button>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="muted" style="text-align:center;padding:40px;">
+  No providers configured. Add one above or set env vars (NAME_API_KEY, NAME_BASE_URL, NAME_MODEL).
+</div>
+{% endif %}
+
+<!-- known provider base URLs for auto-fill -->
+<div id="known-urls" style="display:none;">
+{% for prefix, models in provider_models.items() %}
+  {% if prefix == "opencode" %}
+    <span data-provider="{{ prefix }}" data-url="https://opencode.ai/zen/go/v1" data-model="{{ models[0] }}"></span>
+  {% elif prefix == "commandcode" %}
+    <span data-provider="{{ prefix }}" data-url="https://api.commandcode.ai/provider/v1" data-model="{{ models[0] }}"></span>
+  {% endif %}
+{% endfor %}
+</div>
+
+<script>
+const MODEL_MAP = {{ provider_models | tojson }};
+const KNOWN_URLS = {
+  {% for prefix, models in provider_models.items() %}
+    {% if prefix == "opencode" %}
+      "opencode": {url: "https://opencode.ai/zen/go/v1", model: "{{ models[0] }}"},
+    {% elif prefix == "commandcode" %}
+      "commandcode": {url: "https://api.commandcode.ai/provider/v1", model: "{{ models[0] }}"},
+    {% endif %}
+  {% endfor %}
+};
+
+function toggleAddForm() {
+  const el = document.getElementById('add-form');
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+function populateModels(provider) {
+  const modelSelect = document.getElementById('new-model');
+  const customName = document.getElementById('new-name-custom');
+  const customModel = document.getElementById('new-model-custom');
+  const baseUrl = document.getElementById('new-base-url');
+
+  // Show/hide custom name field
+  if (provider === '__custom__') {
+    customName.style.display = 'block';
+    customName.required = true;
+    return;
+  }
+  customName.style.display = 'none';
+  customName.required = false;
+
+  // Map display name to map key ("opencode-go" → "opencode")
+  const mapKey = provider.replace(/-go$/, '');
+  const models = MODEL_MAP[mapKey] || [];
+  modelSelect.innerHTML = '<option value="">— Select model —</option>';
+  models.forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m;
+    opt.textContent = m;
+    modelSelect.appendChild(opt);
+  });
+  modelSelect.style.display = 'block';
+  customModel.style.display = 'none';
+
+  // Auto-fill base URL and default model
+  const info = KNOWN_URLS[mapKey];
+  if (info) {
+    if (models.length > 0) modelSelect.value = info.model;
+    baseUrl.value = info.url;
+  }
+}
+
+// Toggle custom model for existing cards
+document.querySelectorAll('.provider-select').forEach(sel => {
+  sel.addEventListener('change', function() {
+    const name = this.id.replace('model-', '');
+    const customInput = document.getElementById('model-custom-' + name);
+    if (this.value === '__custom__') {
+      if (customInput) customInput.style.display = 'block';
+    } else {
+      if (customInput) customInput.style.display = 'none';
+    }
+  });
+});
+
+async function addProvider(e) {
+  e.preventDefault();
+  const form = e.target;
+  const data = new FormData(form);
+  // Merge custom name/model with selected
+  const nameSelect = document.getElementById('new-name');
+  const nameCustom = document.getElementById('new-name-custom');
+  const modelSelect = document.getElementById('new-model');
+  const modelCustom = document.getElementById('new-model-custom');
+
+  if (nameSelect.value === '__custom__') {
+    data.set('name', nameCustom.value);
+  }
+  if (!data.get('name')) return alert('Provider name is required');
+
+  const model = modelSelect.value;
+  const modelCust = modelCustom.value;
+  if (model === '__custom__' || (!model && modelCust)) {
+    data.set('model', modelCust);
+  }
+  if (!data.get('model')) return alert('Model is required');
+
+  const resp = await fetch('/providers/add', { method: 'POST', body: data });
+  if (resp.ok) location.reload();
+}
+
+async function setActive(name) {
+  await fetch('/providers/active/' + encodeURIComponent(name), { method: 'POST' });
+  location.reload();
+}
+
+async function deleteProvider(name) {
+  if (!confirm('Delete provider "' + name + '"?')) return;
+  await fetch('/providers/delete/' + encodeURIComponent(name), { method: 'POST' });
+  const card = document.getElementById('prov-' + name);
+  if (card) card.remove();
+}
+
+async function saveProvider(name) {
+  const model = document.getElementById('model-' + name)?.value;
+  const customModel = document.getElementById('model-custom-' + name);
+  const modelFinal = (model === '__custom__' && customModel) ? customModel.value : model;
+  const url = document.getElementById('url-' + name)?.value;
+  if (!modelFinal) return alert('Model is required');
+  if (!url) return alert('Base URL is required');
+
+  // Fetch existing entry so we can preserve the key if unchanged
+  const current = await (await fetch('/providers')).text();
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(current, 'text/html');
+  // Extract key from the card (browser may not retain password input value)
+  const keyEl = document.getElementById('key-' + name);
+  const key = keyEl ? keyEl.value : '';
+
+  const form = new FormData();
+  form.set('name', name);
+  form.set('model', modelFinal);
+  form.set('base_url', url);
+  form.set('api_key', key);
+  form.set('api_type', 'openai_compat');
+
+  await fetch('/providers/add', { method: 'POST', body: form });
+  location.reload();
+}
+
+function toggleKey(name) {
+  const el = document.getElementById('key-' + name);
+  el.type = el.type === 'password' ? 'text' : 'password';
+}
+
+// Show custom model input when Custom… is selected on page load
+document.addEventListener('DOMContentLoaded', function() {
+  document.querySelectorAll('.provider-select').forEach(sel => {
+    const name = sel.id.replace('model-', '');
+    const customInput = document.getElementById('model-custom-' + name);
+    if (sel.value === '__custom__' && customInput) {
+      customInput.style.display = 'block';
+    }
+  });
+});
+</script>
+
+<style>
+.provider-field {
+  margin-bottom: 8px;
+}
+.provider-field label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  display: block;
+  margin-bottom: 2px;
+}
+.provider-select {
+  width: 100%;
+}
+.provider-override {
+  display: none;
+  margin-top: 4px;
+  width: 100%;
+}
+</style>
+{% endblock %}

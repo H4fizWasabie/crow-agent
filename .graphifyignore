@@ -1,0 +1,16 @@
+# Non-codebase directories — skip for clean code-structure graph
+laptop-backup/
+memory-vault/
+graphify-out/
+data/
+image/
+self-learning/
+price_scraper/
+test_results/
+.pi/
+.git/
+__pycache__/
+*.pyc
+node_modules/
+dist/
+.crow_agent/

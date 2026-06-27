@@ -1,0 +1,3 @@
+# Integration-heavy test strategy
+
+Crow's test suite favours integration tests over mock-heavy unit tests. Each module gets its own `test_*.py` file with shared fixtures in `conftest.py`. Tests use in-memory SQLite, real `CommandRunner` instances, and fixture-based setup — not mocks. The rationale: Crow is an integration-heavy runtime (DB, LLM calls, shell commands, file I/O); mocking those layers hides the bugs that matter most (DB schema drift, tool output format changes, provider fallback chains). Unit tests are added only when the logic is genuinely isolated (e.g. prompt builder formatting, output compression thresholds).

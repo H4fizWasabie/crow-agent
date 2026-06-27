@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h2>Cron Jobs</h2>
+</div>
+
+<!-- add job card -->
+<div class="card add-form-card">
+  <h3>Add Job</h3>
+  <form id="add-job-form" onsubmit="addJob(event)">
+    <div class="form-row">
+      <input name="job_id" type="text" placeholder="job id" required class="input" />
+      <input name="interval_seconds" type="number" placeholder="interval (sec)" value="3600" required class="input" />
+    </div>
+    <textarea name="prompt" placeholder="Job prompt / instruction…" rows="2" class="input" required style="width:100%;margin-bottom:8px;"></textarea>
+    <button type="submit" class="btn btn-primary">Add Job</button>
+  </form>
+</div>
+
+<!-- job list -->
+<div class="cron-list" id="jobs-body">
+  {% for job in jobs %}
+  <div class="cron-card" id="job-{{ job.id }}">
+    <div>
+      <div class="cron-id">{{ job.id }}</div>
+      <div class="cron-prompt">{{ job.prompt }}</div>
+    </div>
+    <span class="cron-interval">{{ job.interval_seconds }}s</span>
+    <button onclick="toggleJob('{{ job.id }}')" class="btn btn-sm {% if job.enabled %}btn-primary{% else %}btn{% endif %}" id="toggle-{{ job.id }}">
+      {{ 'ON' if job.enabled else 'OFF' }}
+    </button>
+    <span class="muted" id="lastrun-{{ job.id }}">{{ job.last_run if job.last_run else 'never' }}</span>
+    {% if job.consecutive_failures %}
+    <span class="error-count" title="{{ job.last_error }}">⚠️ {{ job.consecutive_failures }} fail</span>
+    {% endif %}
+    <div class="cron-actions">
+      <button onclick="runJob('{{ job.id }}')" class="btn btn-sm">Run</button>
+      <button onclick="deleteJob('{{ job.id }}')" class="btn btn-sm btn-danger">Delete</button>
+      <span id="result-{{ job.id }}" class="muted" style="margin-left:4px;"></span>
+    </div>
+  </div>
+  {% endfor %}
+  {% if not jobs %}
+  <div class="muted" style="text-align:center;padding:40px;">No cron jobs.</div>
+  {% endif %}
+</div>
+
+<script>
+async function addJob(e) {
+  e.preventDefault();
+  const form = e.target;
+  const data = new FormData(form);
+  await fetch('/cron/add', { method: 'POST', body: data });
+  location.reload();
+}
+
+async function toggleJob(id) {
+  const resp = await fetch('/cron/toggle/' + encodeURIComponent(id), { method: 'POST' });
+  const data = await resp.json();
+  const btn = document.getElementById('toggle-' + id);
+  btn.textContent = data.enabled ? 'ON' : 'OFF';
+  btn.className = 'btn btn-sm ' + (data.enabled ? 'btn-primary' : 'btn');
+}
+
+async function runJob(id) {
+  const el = document.getElementById('result-' + id);
+  el.textContent = 'running…';
+  try {
+    const resp = await fetch('/cron/run/' + encodeURIComponent(id), { method: 'POST' });
+    const data = await resp.json();
+    el.textContent = data.result || data.error || 'done';
+  } catch (e) {
+    el.textContent = 'error: ' + e;
+  }
+}
+
+async function deleteJob(id) {
+  if (!confirm('Delete job "' + id + '"?')) return;
+  await fetch('/cron/delete/' + encodeURIComponent(id), { method: 'POST' });
+  const row = document.getElementById('job-' + id);
+  if (row) row.remove();
+}
+</script>
+{% endblock %}

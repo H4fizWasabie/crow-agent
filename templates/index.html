@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+{% block content %}
+<!-- Chat top bar: session selector -->
+<div class="chat-top-bar">
+  <label for="session-input">Session</label>
+  <input id="session-input" type="text" value="{{ session_id if session_id else 'default' }}"
+         placeholder="session id" list="session-list" class="input" />
+  <datalist id="session-list"></datalist>
+  <button onclick="loadHistory()" class="btn btn-sm">Load</button>
+  <span id="session-turn-badge" class="badge" style="display:none;"></span>
+</div>
+
+<!-- Chat messages area -->
+<div id="chat-messages" class="chat-messages">
+  <div class="chat-greeting-area">
+    <div class="greeting">Let's automate something</div>
+    <div class="greeting-sub">Choose a session or start fresh. What are we building today?</div>
+    <div class="quick-actions">
+      <div class="quick-card" onclick="createSession()">
+        <div class="qc-icon">📄</div>
+        <div class="qc-title">New Session</div>
+        <div class="qc-desc">Start a fresh conversation</div>
+      </div>
+      <a href="/providers" class="quick-card" style="text-decoration:none;">
+        <div class="qc-icon">🔌</div>
+        <div class="qc-title">Select Provider</div>
+        <div class="qc-desc">Switch LLM backend</div>
+      </a>
+      <div class="quick-card" onclick="quickAction('run a health check on this repo')">
+        <div class="qc-icon">🔍</div>
+        <div class="qc-title">Audit Repo</div>
+        <div class="qc-desc">Check project health</div>
+      </div>
+      <a href="/cron" class="quick-card" style="text-decoration:none;">
+        <div class="qc-icon">⏰</div>
+        <div class="qc-title">Run Cron</div>
+        <div class="qc-desc">Manage scheduled jobs</div>
+      </a>
+      <a href="/skills" class="quick-card" style="text-decoration:none;">
+        <div class="qc-icon">⚡</div>
+        <div class="qc-title">Browse Skills</div>
+        <div class="qc-desc">View loaded skill library</div>
+      </a>
+      <a href="/sessions" class="quick-card" style="text-decoration:none;">
+        <div class="qc-icon">📋</div>
+        <div class="qc-title">Search Sessions</div>
+        <div class="qc-desc">FTS across all history</div>
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- Chat input bar -->
+<div class="chat-input-area">
+  <textarea id="chat-input" class="chat-input" rows="2" aria-label="Chat message"
+            placeholder="Type a message… (Enter to send, Shift+Enter for newline)"></textarea>
+  <button onclick="sendMessage()" id="send-btn" class="btn-send">Send</button>
+</div>
+
+<script>
+const chatMessages = document.getElementById('chat-messages');
+const chatInput = document.getElementById('chat-input');
+const sessionInput = document.getElementById('session-input');
+const sendBtn = document.getElementById('send-btn');
+
+chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+
+function getSessionId() { return sessionInput.value.trim() || 'default'; }
+
+function escapeHtml(t) {
+  return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function appendMsg(role, content) {
+  // Remove welcome greeting when first message sent
+  const greeting = chatMessages.querySelector('.chat-greeting-area');
+  if (greeting) greeting.remove();
+
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.innerHTML = '<span class="role">' + role + '</span><div class="content">' + escapeHtml(content) + '</div>';
+  chatMessages.appendChild(div);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function appendStreamingMsg() {
+  const greeting = chatMessages.querySelector('.chat-greeting-area');
+  if (greeting) greeting.remove();
+
+  const div = document.createElement('div');
+  div.className = 'msg assistant';
+  const contentDiv = document.createElement('div');
+  contentDiv.className = 'content streaming-content';
+  const roleSpan = document.createElement('span');
+  roleSpan.className = 'role';
+  roleSpan.textContent = 'assistant';
+  div.appendChild(roleSpan);
+  div.appendChild(contentDiv);
+  chatMessages.appendChild(div);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+  return contentDiv;
+}
+
+async function sendMessage() {
+  const msg = chatInput.value.trim();
+  if (!msg) return;
+  const sid = getSessionId();
+  chatInput.value = '';
+  sendBtn.disabled = true;
+  appendMsg('user', msg);
+  const streamingEl = appendStreamingMsg();
+
+  const url = '/chat/stream?session_id=' + encodeURIComponent(sid) + '&message=' + encodeURIComponent(msg);
+  const evtSource = new EventSource(url);
+
+  evtSource.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.delta && streamingEl) {
+      streamingEl.textContent += data.delta;
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+    if (data.done) {
+      evtSource.close();
+      sendBtn.disabled = false;
+      // Replace chat messages with server-side history for consistency
+      if (data.history) {
+        // Keep only the greeting if no history
+        chatMessages.innerHTML = data.history;
+      }
+      if (window.populateContext) setTimeout(populateContext, 500);
+    }
+  };
+  evtSource.onerror = () => { evtSource.close(); sendBtn.disabled = false; };
+}
+
+async function loadHistory() {
+  const sid = getSessionId();
+  const resp = await fetch('/sessions/' + encodeURIComponent(sid) + '/history');
+  if (!resp.ok) return;
+  const html = await resp.text();
+
+  // Parse history HTML and inject into chat messages
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+  const msgs = doc.querySelectorAll('.msg');
+  chatMessages.innerHTML = '';
+
+  if (msgs.length === 0) {
+    chatMessages.innerHTML = `
+      <div class="chat-greeting-area">
+        <div class="greeting">Let's automate something</div>
+        <div class="greeting-sub">Choose a session or start fresh. What are we building today?</div>
+        <div class="quick-actions">
+          <div class="quick-card" onclick="createSession()">
+            <div class="qc-icon">📄</div>
+            <div class="qc-title">New Session</div>
+            <div class="qc-desc">Start a fresh conversation</div>
+          </div>
+          <a href="/providers" class="quick-card" style="text-decoration:none;">
+            <div class="qc-icon">🔌</div>
+            <div class="qc-title">Select Provider</div>
+            <div class="qc-desc">Switch LLM backend</div>
+          </a>
+          <div class="quick-card" onclick="quickAction('run a health check on this repo')">
+            <div class="qc-icon">🔍</div>
+            <div class="qc-title">Audit Repo</div>
+            <div class="qc-desc">Check project health</div>
+          </div>
+          <a href="/cron" class="quick-card" style="text-decoration:none;">
+            <div class="qc-icon">⏰</div>
+            <div class="qc-title">Run Cron</div>
+            <div class="qc-desc">Manage scheduled jobs</div>
+          </a>
+          <a href="/skills" class="quick-card" style="text-decoration:none;">
+            <div class="qc-icon">⚡</div>
+            <div class="qc-title">Browse Skills</div>
+            <div class="qc-desc">View loaded skill library</div>
+          </a>
+          <a href="/sessions" class="quick-card" style="text-decoration:none;">
+            <div class="qc-icon">📋</div>
+            <div class="qc-title">Search Sessions</div>
+            <div class="qc-desc">FTS across all history</div>
+          </a>
+        </div>
+      </div>`;
+  } else {
+    msgs.forEach(m => chatMessages.appendChild(m.cloneNode(true)));
+  }
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+  if (window.populateContext) setTimeout(populateContext, 200);
+}
+
+async function quickAction(msg) {
+  const sid = getSessionId();
+  // Navigate to chat if not already there, then send
+  if (!chatInput) {
+    window.location.href = '/?session=' + encodeURIComponent(sid) + '&msg=' + encodeURIComponent(msg);
+    return;
+  }
+  chatInput.value = msg;
+  sendMessage();
+}
+
+// Populate session datalist and load initial history if session param exists
+async function populateSessionList() {
+  const resp = await fetch('/sessions');
+  if (!resp.ok) return;
+  const html = await resp.text();
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+  const datalist = document.getElementById('session-list');
+  doc.querySelectorAll('.editable-name').forEach(el => {
+    const opt = document.createElement('option');
+    opt.value = el.textContent.trim();
+    datalist.appendChild(opt);
+  });
+}
+
+// Check URL for ?session= or ?msg= params
+(function init() {
+  const params = new URLSearchParams(window.location.search);
+  const sessParam = params.get('session');
+  const msgParam = params.get('msg');
+  if (sessParam && sessionInput) sessionInput.value = sessParam;
+  populateSessionList();
+  if (sessParam) loadHistory();
+  if (msgParam && chatInput) {
+    chatInput.value = msgParam;
+    setTimeout(sendMessage, 300);
+  }
+})();
+</script>
+{% endblock %}

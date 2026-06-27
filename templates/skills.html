@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h2>Skills <span class="badge">{{ skills|length }}</span></h2>
+</div>
+
+<div class="skills-grid">
+  {% for skill in skills %}
+  <div class="skill-card" onclick="toggleSkill(this)">
+    <div class="skill-header">
+      <strong>{{ skill.name }}</strong>
+      <span class="badge">{{ skill.intent }}</span>
+    </div>
+    <p class="muted" style="margin-bottom:6px;">{{ skill.description }}</p>
+    <div class="skill-triggers">
+      {% for t in skill.triggers %}
+      <span class="tag">{{ t }}</span>
+      {% endfor %}
+    </div>
+    <div class="skill-body" style="display:none;">
+      <pre><code>{{ skill.body }}</code></pre>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<script>
+function toggleSkill(el) {
+  const body = el.querySelector('.skill-body');
+  body.style.display = body.style.display === 'none' ? 'block' : 'none';
+}
+</script>
+{% endblock %}

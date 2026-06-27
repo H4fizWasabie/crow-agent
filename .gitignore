@@ -1,0 +1,30 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+dist/
+build/
+*.egg-info/
+.crow_agent/
+.env
+graphify-out/cache/
+graphify-out/.graphify_python
+.remember/
+.understand-anything/
+.claude/
+.openclaude/
+# OSS safety: vault contains personal data
+memory vault/
+self-learning/
+scripts/sync-memory-vault.sh
+graphify-out/
+docs/handoff-*.md
+.pi/self-learning-memory
+config/gmail_personal_*
+sessions.db*
+config/gmail_credentials.json
+config/gmail_token.json
+client_secret_*.json
+
+CROW_STATE.md
+.codegraph/

@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>📊 HQ Dashboard</h1>
+</div>
+
+<!-- Metric cards -->
+<div class="metric-grid">
+  {% for m in metrics %}
+  <div class="metric-card metric-{{ m.color }}">
+    <div class="metric-icon">{{ m.icon }}</div>
+    <div class="metric-body">
+      <div class="metric-value">{{ m.value }}</div>
+      <div class="metric-label">{{ m.label }}</div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Token usage & extra stats -->
+<div class="two-col">
+  <div class="card">
+    <div class="card-header">Token Usage</div>
+    <div class="card-body">
+      <div class="stat-row">
+        <span class="stat-label">Total</span>
+        <span class="stat-value">{{ extra.total_tokens }}</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Prompt</span>
+        <span class="stat-value">{{ extra.prompt_tokens }}</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Completion</span>
+        <span class="stat-value">{{ extra.completion_tokens }}</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">Active Cron Jobs</div>
+    <div class="card-body cron-list">
+      {% if jobs %}
+        {% for j in jobs %}
+        <div class="cron-item">
+          <span class="cron-schedule">{{ j.interval_seconds }}s</span>
+          <span class="cron-prompt">{{ j.prompt[:60] }}</span>
+          <span class="cron-status {% if j.enabled %}status-on{% else %}status-off{% endif %}">
+            {{ "ON" if j.enabled else "OFF" }}
+          </span>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="empty-state">No cron jobs scheduled.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Price search -->
+<div class="card">
+  <div class="card-header">
+    Price Lookup
+    <span class="card-subtitle">Search products across all suppliers</span>
+  </div>
+  <div class="card-body">
+    <input id="price-search" type="text" class="input search-input"
+           placeholder="Search product name..." autocomplete="off" />
+    <div id="price-results" class="price-results">
+      <div class="empty-state">Type a product name to search prices.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    const input = document.getElementById('price-search');
+    if (!input) return;
+
+    function doSearch() {
+      const q = input.value.trim();
+      if (!q) {
+        document.getElementById('price-results').innerHTML =
+          '<div class="empty-state">Type a product name to search prices.</div>';
+        return;
+      }
+      fetch('/api/prices/search?q=' + encodeURIComponent(q))
+        .then(r => r.json())
+        .then(data => {
+          const el = document.getElementById('price-results');
+          if (!data.rows || data.rows.length === 0) {
+            el.innerHTML = '<div class="empty-state">No results found.</div>';
+            return;
+          }
+          let html = '<table class="price-table"><thead><tr>' +
+            '<th>Product</th><th>Generic</th><th>Supplier</th><th>Price</th><th>Unit</th><th>Updated</th>' +
+            '</tr></thead><tbody>';
+          data.rows.forEach(r => {
+            html += '<tr>' +
+              '<td>' + r.product + '</td>' +
+              '<td>' + (r.generic_name || '-') + '</td>' +
+              '<td>' + r.supplier + '</td>' +
+              '<td><strong>' + r.currency + ' ' + r.price + '</strong></td>' +
+              '<td>' + (r.unit || '-') + '</td>' +
+              '<td>' + (r.scraped_at || '-') + '</td>' +
+              '</tr>';
+          });
+          html += '</tbody></table>';
+          el.innerHTML = html;
+        })
+        .catch(() => {
+          document.getElementById('price-results').innerHTML =
+            '<div class="empty-state">Error searching prices.</div>';
+        });
+    }
+
+    // Debounced search
+    let timer;
+    input.addEventListener('input', function() {
+      clearTimeout(timer);
+      timer = setTimeout(doSearch, 300);
+    });
+  });
+</script>
+
+<style>
+  .metric-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .metric-card {
+    background: var(--card-bg, #fff);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 10px;
+    padding: 16px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    transition: box-shadow 0.15s;
+  }
+  .metric-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+  .metric-icon { font-size: 28px; line-height: 1; }
+  .metric-body { min-width: 0; }
+  .metric-value { font-size: 22px; font-weight: 700; line-height: 1.2; }
+  .metric-label { font-size: 12px; color: var(--text-dim, #6b7280); margin-top: 2px; }
+  .metric-blue .metric-value { color: #2563eb; }
+  .metric-green .metric-value { color: #16a34a; }
+  .metric-amber .metric-value { color: #d97706; }
+  .metric-purple .metric-value { color: #7c3aed; }
+  .metric-sky .metric-value { color: #0284c7; }
+  .metric-pink .metric-value { color: #db2777; }
+  .metric-emerald .metric-value { color: #059669; }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--card-bg, #fff);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .card-header {
+    padding: 14px 18px 10px;
+    font-weight: 600;
+    font-size: 15px;
+    border-bottom: 1px solid var(--border, #e5e7eb);
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .card-subtitle { font-weight: 400; font-size: 12px; color: var(--text-dim, #6b7280); }
+  .card-body { padding: 14px 18px 18px; }
+
+  .stat-row { display: flex; justify-content: space-between; padding: 6px 0; }
+  .stat-row + .stat-row { border-top: 1px solid var(--border, #e5e7eb); }
+  .stat-label { color: var(--text-dim, #6b7280); font-size: 14px; }
+  .stat-value { font-weight: 600; font-size: 14px; }
+
+  .cron-list { max-height: 240px; overflow-y: auto; }
+  .cron-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 0; font-size: 13px;
+  }
+  .cron-item + .cron-item { border-top: 1px solid var(--border, #e5e7eb); }
+  .cron-schedule { font-family: monospace; font-size: 12px; color: var(--text-dim, #6b7280); min-width: 70px; }
+  .cron-prompt { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cron-status { font-size: 11px; padding: 1px 8px; border-radius: 4px; font-weight: 600; }
+  .status-on { background: #dcfce7; color: #16a34a; }
+  .status-off { background: #fee2e2; color: #dc2626; }
+
+  .search-input { width: 100%; box-sizing: border-box; font-size: 14px; padding: 10px 14px; }
+  .price-results { margin-top: 12px; max-height: 400px; overflow-y: auto; }
+  .price-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .price-table th { text-align: left; padding: 8px 10px; border-bottom: 2px solid var(--border, #e5e7eb); font-weight: 600; color: var(--text-dim, #6b7280); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .price-table td { padding: 7px 10px; border-bottom: 1px solid var(--border, #e5e7eb); }
+  .price-table tr:hover td { background: var(--hover-bg, #f9fafb); }
+  .empty-state { color: var(--text-dim, #9ca3af); font-size: 13px; padding: 12px 0; text-align: center; }
+</style>
+{% endblock %}

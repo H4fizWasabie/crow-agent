@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h2>Sessions</h2>
+  <div class="search-bar">
+    <input id="search-input" type="text" placeholder="FTS search…" class="input" />
+    <button onclick="doSearch()" class="btn">Search</button>
+  </div>
+</div>
+
+<div id="search-results"></div>
+
+<div class="session-list">
+  {% for s in sessions %}
+  <div class="session-row">
+    <span class="sess-name">
+      <span class="editable-name" data-session-id="{{ s.id }}"
+            onclick="editName(this)">{{ s.id }}</span>
+    </span>
+    <div class="sess-meta">
+      <span>{{ s.turn_count }} turns</span>
+      <span>{{ s.created_at[:10] }}</span>
+      <a href="/sessions/{{ s.id }}" class="btn btn-sm">View</a>
+      <a href="/sessions/{{ s.id }}/export?format=md" class="btn btn-sm">Export</a>
+      <button class="btn btn-sm" onclick="forkSession('{{ s.id }}')">Fork</button>
+      <button class="btn btn-sm btn-danger"
+              onclick="deleteSession('{{ s.id }}')">Delete</button>
+    </div>
+  </div>
+  {% endfor %}
+  {% if not sessions %}
+  <div class="muted" style="text-align:center;padding:40px;">No sessions yet.</div>
+  {% endif %}
+</div>
+
+<script>
+async function doSearch() {
+  const q = document.getElementById('search-input').value.trim();
+  if (!q) return;
+  const resp = await fetch('/search?q=' + encodeURIComponent(q));
+  const html = await resp.text();
+  document.getElementById('search-results').innerHTML = html;
+}
+document.getElementById('search-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') doSearch();
+});
+
+function editName(el) {
+  const sid = el.dataset.sessionId;
+  const old = el.textContent;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = old;
+  input.className = 'input';
+  input.style.width = '180px';
+  el.replaceWith(input);
+  input.focus();
+
+  const save = async () => {
+    const val = input.value.trim();
+    if (val && val !== old) {
+      const resp = await fetch('/sessions/' + encodeURIComponent(sid) + '/rename', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'name=' + encodeURIComponent(val),
+      });
+      const data = await resp.json();
+      if (data.ok) location.reload();
+      else alert(data.error);
+    } else {
+      input.replaceWith(el);
+    }
+  };
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') save();
+    if (e.key === 'Escape') input.replaceWith(el);
+  });
+  input.addEventListener('blur', save);
+}
+
+async function forkSession(sid) {
+  const resp = await fetch('/sessions/' + encodeURIComponent(sid) + '/fork', { method: 'POST' });
+  const data = await resp.json();
+  if (data.ok) window.location.href = '/sessions';
+  else alert(data.error);
+}
+
+function deleteSession(sid) {
+  if (!confirm('Delete session "' + sid + '" and all its turns?')) return;
+  fetch('/sessions/' + encodeURIComponent(sid) + '/delete', { method: 'POST' })
+    .then(() => location.reload());
+}
+</script>
+{% endblock %}

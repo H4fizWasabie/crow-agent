@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h2>Team <span class="badge">{{ profiles|length }}</span></h2>
+</div>
+
+<div class="skills-grid">
+  {% for name, p in profiles.items() %}
+  <div class="skill-card" onclick="toggleProfile(this)">
+    <div class="skill-header">
+      <strong>{{ p.name }}</strong>
+      {% if p.model %}
+      <span class="tag">{{ p.model }}</span>
+      {% endif %}
+    </div>
+    <p class="muted" style="margin-bottom:6px;">{{ p.description }}</p>
+    <div class="skill-triggers">
+      {% for tool in p.tools %}
+      <span class="tag">{{ tool }}</span>
+      {% endfor %}
+    </div>
+    <div class="skill-body" style="display:none;margin-top:8px;">
+      <pre><code>{{ p.instructions }}</code></pre>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<script>
+function toggleProfile(el) {
+  const body = el.querySelector('.skill-body');
+  body.style.display = body.style.display === 'none' ? 'block' : 'none';
+}
+</script>
+{% endblock %}
