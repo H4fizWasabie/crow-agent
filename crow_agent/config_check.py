@@ -44,8 +44,8 @@ def validate_config() -> list[str]:
         if not has_env_provider:
             errors.append(
                 "No API keys found. Configure at least one provider:\n"
-                "  • Set OPENCODE_GO_API_KEY in .env (free at https://opencode.ai)\n"
-                "  • Or create ~/.crow_agent/providers.json (see docs)"
+                "  • Set OPENROUTER_API_KEY in .env (free at https://openrouter.ai/keys)\n"
+                "  • Or set any {NAME}_API_KEY / {NAME}_BASE_URL / {NAME}_MODEL env vars"
             )
         return errors  # can't check providers.json further
 
