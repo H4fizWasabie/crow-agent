@@ -48,8 +48,6 @@ _DEAD_TOOLS: set[str] = {
     "post_to_threads",
     # Unused misc
     "get_time", "find",
-    # Procurement wrappers (loaded lazily via procurement extension)
-    # Handled separately below
 }
 
 # Tools only available via lazy extensions (moved from core to extension):
@@ -60,8 +58,6 @@ _LAZY_TOOLS: set[str] = {
     "spawn_agent", "spawn_team", "delegate_task", "cancel_task", "task_status",
     # Skills (lazy extension)
     "create_skill", "list_skills",
-    # Procurement (lazy extension — loaded with extension/procurement)
-    "query_procurement", "procurement_dashboard", "query_prices",
     # Session search (lazy extension)
     "session_search",
 }
@@ -86,7 +82,7 @@ def register_builtins(
     # ── Register all tools from existing modules ──
     from . import (
         tools_file, tools_web, tools_comms, tools_media, tools_tasks,
-        tools_git, tools_agent, tools_ssh, tools_procurement,
+        tools_git, tools_agent, tools_ssh,
         tools_process, skills_system, tools_cron, tools_lsp, tools_mcp,
     )
 
@@ -99,7 +95,6 @@ def register_builtins(
     tools_agent.register_tools(registry, **deps)
     tools_ssh.register_tools(registry)
     skills_system.register_tools(registry)
-    tools_procurement.register_tools(registry)
     tools_process.register_tools(registry)
     tools_cron.register_tools(registry)
     tools_lsp.register_tools(registry)
@@ -164,12 +159,6 @@ def register_builtins(
                 t = _lazy_snapshots[name]
                 r.register(description=t["description"])(t["fn"])
 
-    def _lazy_proc_reg(r: ToolRegistry) -> None:
-        for name in ("query_procurement", "procurement_dashboard", "query_prices"):
-            if name in _lazy_snapshots:
-                t = _lazy_snapshots[name]
-                r.register(description=t["description"])(t["fn"])
-
     def _lazy_session_reg(r: ToolRegistry) -> None:
         if "session_search" in _lazy_snapshots:
             t = _lazy_snapshots["session_search"]
@@ -179,12 +168,6 @@ def register_builtins(
     registry.register_lazy("agent", r'\b(spawn|delegate|cancel\s+task|task\s+status|background|crew)\b', _lazy_agent_reg)
     registry.register_lazy("skills", r'\b(create\s+skill|list\s+skill|skills\b)', _lazy_skills_reg)
 
-    # Procurement core tools (snapshotted from tools_procurement + tools_tasks)
-    registry.register_lazy(
-        "procurement-core",
-        r'\b(po\b|rfq|supplier|stock|item|purchase|invoice|quotation|price|procurement|dashboard)\b',
-        _lazy_proc_reg,
-    )
     # Session search
     registry.register_lazy(
         "session-search",
@@ -193,16 +176,6 @@ def register_builtins(
     )
 
     # ── Lazy extensions (external extension dirs) ──
-    registry.register_lazy(
-        "procurement",
-        r'\b(po\b|rfq|supplier|stock|item|purchase|invoice|quotation|price|procurement|generate.*pdf|draft|pipeline|planning)\b',
-        lambda r: _load_extension(r, "procurement"),
-    )
-    registry.register_lazy(
-        "gmail",
-        r'\b(gmail|email\s+audit|drive|google\s+drive)\b',
-        lambda r: _load_extension(r, "gmail_audit"),
-    )
     registry.register_lazy(
         "project",
         r'\b(project\s+(create|focus|decide|task)|new\s+project)\b',

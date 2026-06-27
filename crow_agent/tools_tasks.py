@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
-
-_price_db_conn: str | None = None
 
 
 def register_tools(registry: Any, **kwargs: Any) -> None:
@@ -77,51 +74,4 @@ def register_tools(registry: Any, **kwargs: Any) -> None:
         snoozed = (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat()
         db.update_task(task_id, snoozed_until=snoozed)
         return f"⏰ Snoozed '{task['title']}' for {minutes} min"
-
-    @registry.register(
-        description="Query the price database. Search by product name or generic name. Returns latest prices from all suppliers.",
-        name="query_prices",
-    )
-    def query_prices(search: str = "", limit: int = 10) -> str:
-        global _price_db_conn
-        if _price_db_conn is None:
-            _price_db_conn = os.environ.get("PRICE_DB_CONN", "")
-        try:
-            import psycopg2
-            import psycopg2.extras
-            if not _price_db_conn:
-                return "Price DB not configured. Set PRICE_DB_CONN in .env"
-            conn = psycopg2.connect(_price_db_conn)
-            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-            cur.execute("""
-                SELECT p.name AS product, p.generic_name, s.name AS supplier,
-                       pr.price, pr.currency, pr.unit, pr.scraped_at
-                FROM prices pr
-                JOIN sources src ON src.id = pr.source_id
-                JOIN products p ON p.id = src.product_id
-                JOIN suppliers s ON s.id = src.supplier_id
-                WHERE (%(search)s = '' OR p.name ILIKE %(pat)s OR p.generic_name ILIKE %(pat)s)
-                  AND pr.scraped_at = (
-                      SELECT MAX(pr2.scraped_at) FROM prices pr2
-                      WHERE pr2.source_id = pr.source_id
-                  )
-                ORDER BY pr.scraped_at DESC
-                LIMIT %(limit)s
-            """, {"search": search, "pat": f"%{search}%", "limit": limit})
-            rows = cur.fetchall()
-            cur.close()
-            conn.close()
-            if not rows:
-                return f"No prices found for '{search}'"
-            lines = ["| Product | Generic Name | Supplier | Price | Unit | Last Updated |"]
-            lines.append("|---|---|---|---|---|---|")
-            for r in rows:
-                lines.append(
-                    f"| {r['product']} | {r['generic_name'] or '-'} "
-                    f"| {r['supplier']} | {r['currency']} {r['price']} "
-                    f"| {r['unit'] or '-'} | {r['scraped_at'].strftime('%d %b %Y') if r['scraped_at'] else '-'} |"
-                )
-            return "\n".join(lines)
-        except Exception as e:
-            return f"Price DB error: {e}"
 
