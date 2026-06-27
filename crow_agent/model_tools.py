@@ -17,38 +17,7 @@ from .paths import PROJECT_ROOT
 logger = logging.getLogger("crow_agent.extensions")
 
 # Tools removed (use run_cmd instead):
-_DEAD_TOOLS: set[str] = {
-    # Duplicates (run_cmd handles these)
-    "bash", "exec_async", "pip_install",
-    # Process wrappers (run_cmd ps/tail/kill)
-    "process_log", "process_poll", "process_list", "process_kill",
-    # File search (run_cmd grep/find/ls)
-    "grep_files", "list_dir", "glob",
-    # Git wrappers (run_cmd git status/diff)
-    "git_status",
-    # SSH wrapper (run_cmd ssh)
-    "ssh_exec",
-    # Cron wrappers (run_cmd crontab)
-    "cron_list", "cron_create", "cron_remove", "cron_pause", "cron_resume",
-    # Task secretary (run_cmd sqlite3 for tasks)
-    "create_task", "list_tasks", "complete_task", "snooze_task",
-    # Media (generate_image/say/etc never used; ocr_document un-deaded 2026-06-23)
-    "extract_pdf_text", "convert_file",
-    # Browser (never used, web_fetch covers)
-    "browser_fetch", "browser_navigate", "browser_snapshot",
-    "browser_click", "browser_type", "browser_press",
-    "browser_scroll", "browser_back", "browser_page_text",
-    "scrape_page",
-    # Meta/planning (unused)
-    "begin_plan", "commit_plan", "restore_file",
-    "crow_run", "list_tools", "pipe_table",
-    # Duplicates of recall
-    "retrieve", "semantic_recall",
-    # Unused comms
-    "post_to_threads",
-    # Unused misc
-    "get_time", "find",
-}
+_DEAD_TOOLS: set[str] = set()  # ponytail: all tools un-deaded 2026-06-27 — Crow needs them
 
 # Tools only available via lazy extensions (moved from core to extension):
 _LAZY_TOOLS: set[str] = {

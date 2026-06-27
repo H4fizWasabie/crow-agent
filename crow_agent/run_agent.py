@@ -44,12 +44,6 @@ _FAILURE_ABORT_MSG = (
     "Could you help me understand what you need? "
     "I'll try a different approach."
 )
-_FAILURE_WARNING_MSG = (
-    "[SYSTEM] {} consecutive tool calls failed. "
-    "Last error: {}. "
-    "Try a different tool or approach. "
-    "If stuck, respond with what you have."
-)
 
 # Tool timeouts
 _TOOL_TIMEOUT = 30  # seconds per individual tool call
@@ -114,24 +108,11 @@ _DANGEROUS_PATTERNS: list[tuple[str, str, str]] = [
 ]
 
 _LOOP_HARD_CEILING = 12  # ponytail: inlined from deleted tool_loop_guard.py
-_LOOP_THINK_IN_CODE_PROMPT = (
-    "[SYSTEM] You have used read_file/grep_files {count} times. "
-    "Per Rule 8 (Think in Code): when processing data across multiple files, "
-    "write ONE run_script instead of many individual reads. "
-    "One script replaces 10+ tool calls."
-)
 
 # Parallel execution nudge — injected at round 2 if no parallel tools used yet
 _LOOP_PARALLEL_PROMPT = (
     "[SYSTEM] You can call MULTIPLE tools in parallel per round. "
     "Independent reads, searches, and checks should be batched into one round."
-)
-
-# Wrap-up nudge — injected at round 8, one last chance
-_LOOP_WRAP_UP_PROMPT = (
-    "[SYSTEM] Tool round {round}. You are approaching the round limit. "
-    "Finish within 2 more rounds or the turn will end with what you have. "
-    "Use spawn_agent for remaining work if needed."
 )
 
 # Early ceiling warning — injected at ceiling-2 to prevent silent exhaustion
@@ -504,6 +485,8 @@ class AIAgent:
             memory_path=memory_path or "MEMORY.md",
         )
         self._turn_count = 0
+        # Foreman: crew task monitoring (Phase 9) — set externally via app.py
+        self._foreman: Any | None = None
         # Option C: read-lock — track consecutive reads, lock after N
         self._read_streak: int = 0
         self._READ_STREAK_MAX = 3
@@ -554,6 +537,7 @@ class AIAgent:
             provider_manager=self._provider_manager,
             cached_system_content=self._cached_system_content,
             self_model=self._self_model,
+            foreman=getattr(self, '_foreman', None),
         )
 
         self._pending_skill_hints = pending_hints
@@ -779,6 +763,10 @@ class AIAgent:
                 _loop_round += 1
                 self.state = State.TOOL_LOOP
 
+                # Parallel nudge: suggest batching independent tools at round 2
+                if _loop_round == 2:
+                    messages.append(ChatMessage(role="system", content=_LOOP_PARALLEL_PROMPT))
+
                 if _loop_round >= _LOOP_HARD_CEILING:
                     _budget_exhausted = True
                     messages.append(ChatMessage(
@@ -845,114 +833,41 @@ class AIAgent:
 
                 # Call LLM for next round (async)
                 resp = await _loop.run_in_executor(
-                    None, self._provider.chat, messages, self._get_tools()
+                    None, self._provider.chat, messages, self._get_tools_filtered()
                 )
                 full_content, tool_calls = _merge_text_tools(resp.content, resp.tool_calls)
                 total_prompt += resp.usage.get("prompt_tokens", 0)
                 total_completion += resp.usage.get("completion_tokens", 0)
 
-            # --- Post-tool nudge: intercept narration before RESPOND ---
-            # After the tool loop, if LLM wrote text without tools and without
-            # [DONE]/[CONTINUE], nudge up to 2 times. On 3rd attempt: guard prevents
-            # narration leakage by overwriting to [CONTINUE].
-            if full_content.strip() and not _budget_exhausted:
-                _done_or_continue = (
-                    ("[DONE]" in full_content) or ("[CONTINUE]" in full_content)
-                    or _detect_narrated_intent(full_content)
-                )
-                if not _done_or_continue:
-                    _nudge_count = 0
-                    while _nudge_count < 3:
-                        _nudge_count += 1
-                        _nudge_text = (_POST_TOOL_NUDGE_2 if _nudge_count >= 2
-                                       else _POST_TOOL_NUDGE_1)
-                        messages.append(ChatMessage(role="system", content=_nudge_text))
+                # Post-tool nudge: LLM wrote status update instead of continuing.
+                # Inline (matching sync path) — no separate post-loop block.
+                if not tool_calls and not _budget_exhausted and full_content:
+                    if "[DONE]" in full_content or "[CONTINUE]" in full_content or _detect_narrated_intent(full_content):
+                        if not ("[DONE]" in full_content or "[CONTINUE]" in full_content):
+                            full_content = f"[CONTINUE] {full_content}"
+                        break
+                    # Retry 1: firm reminder
+                    messages.append(ChatMessage(role="assistant", content=full_content))
+                    messages.append(ChatMessage(role="system", content=_POST_TOOL_NUDGE_1))
+                    resp = await _loop.run_in_executor(
+                        None, self._provider.chat, messages, self._get_tools_filtered()
+                    )
+                    full_content, tool_calls = _merge_text_tools(resp.content, resp.tool_calls)
+                    total_prompt += resp.usage.get("prompt_tokens", 0)
+                    total_completion += resp.usage.get("completion_tokens", 0)
+                    # Retry 2: hard demand (if still narrating)
+                    if not tool_calls and full_content:
+                        messages.append(ChatMessage(role="assistant", content=full_content))
+                        messages.append(ChatMessage(role="system", content=_POST_TOOL_NUDGE_2))
                         resp = await _loop.run_in_executor(
-                            None, self._provider.chat, messages, self._get_tools()
+                            None, self._provider.chat, messages, self._get_tools_filtered()
                         )
-                        full_content, post_nudge_tools = _merge_text_tools(
-                            resp.content, resp.tool_calls
-                        )
+                        full_content, tool_calls = _merge_text_tools(resp.content, resp.tool_calls)
                         total_prompt += resp.usage.get("prompt_tokens", 0)
                         total_completion += resp.usage.get("completion_tokens", 0)
-                        if post_nudge_tools:
-                            # LLM got the hint — re-enter tool loop
-                            tool_calls = post_nudge_tools
-                            while tool_calls:
-                                _loop_round += 1
-                                if _loop_round >= _LOOP_HARD_CEILING:
-                                    _budget_exhausted = True
-                                    messages.append(ChatMessage(
-                                        role="system",
-                                        content=_BUDGET_EXHAUSTION_PROMPT
-                                    ))
-                                    try:
-                                        resp = await _loop.run_in_executor(
-                                            None, self._provider.chat, messages, tools=None
-                                        )
-                                        full_content, _ = _merge_text_tools(resp.content, [])
-                                        total_prompt += resp.usage.get("prompt_tokens", 0)
-                                        total_completion += resp.usage.get("completion_tokens", 0)
-                                    except Exception:
-                                        pass
-                                    break
-
-                                # Early ceiling warning at ceiling-2 (Ren parity)
-                                if _loop_round >= _LOOP_HARD_CEILING - 2:
-                                    messages.append(ChatMessage(
-                                        role="system",
-                                        content=_CEILING_EARLY_WARNING.format(
-                                            round=_loop_round, ceiling=_LOOP_HARD_CEILING
-                                        ),
-                                    ))
-                                messages.append(ChatMessage(
-                                    role="assistant",
-                                    content=full_content,
-                                    tool_calls=tool_calls,
-                                ))
-                                tc, consecutive_failures, last_error, abort = \
-                                    await _loop.run_in_executor(
-                                        None, self._execute_tool_calls,
-                                        tool_calls, messages
-                                    )
-                                all_tool_calls.extend(tc)
-                                # Option C: update read streak + hard stop
-                                self._update_read_streak(tc)
-                                if self._read_streak >= self._READ_STREAK_MAX * 3:
-                                    logger.warning("Read-lock hard stop (nudge re-entry): streak=%d", self._read_streak)
-                                    tool_calls = None
-                                    full_content = "[CONTINUE] Read-lock engaged. Task will resume on next heartbeat."
-                                    break
-                                if abort:
-                                    tool_calls = None
-                                    full_content = _FAILURE_ABORT_MSG.format(last_error)
-                                    break
-                                resp = await _loop.run_in_executor(
-                                    None, self._provider.chat, messages,
-                                    self._get_tools()
-                                )
-                                full_content, tool_calls = _merge_text_tools(
-                                    resp.content, resp.tool_calls
-                                )
-                                total_prompt += resp.usage.get("prompt_tokens", 0)
-                                total_completion += resp.usage.get("completion_tokens", 0)
-                            break  # tools happened, exit nudge loop
-                        if "[DONE]" in full_content or "[CONTINUE]" in full_content or _detect_narrated_intent(full_content):
-                            if not ("[DONE]" in full_content or "[CONTINUE]" in full_content):
-                                full_content = f"[CONTINUE] {full_content}"
-                            break  # LLM signaled, accept it
-                        if not full_content.strip():
-                            # Guard: LLM returned empty — inject fallback to prevent ghosting
-                            logger.warning("Post-tool nudge: empty response — injecting fallback")
-                            full_content = f"[CONTINUE] Task in progress. Tools used: {len(all_tool_calls)}."
-                            break  # fallback set, exit nudge loop
-                    else:
-                        # Guard: all 3 nudges failed — overwrite to prevent leakage
-                        logger.warning(
-                            "Post-tool nudge exhausted in stream path. "
-                            "Marking [CONTINUE]."
-                        )
-                        full_content = "[CONTINUE] Working on this task. Will resume shortly."
+                        if not tool_calls:
+                            logger.warning("Post-tool nudge exhausted (3 attempts). Marking [CONTINUE].")
+                            full_content = "[CONTINUE] Working on this task. Will resume shortly."
 
             # --- RESPOND (via turn finalizer) ---
             # Safety net: never deliver empty response to user (ghosting bug)
@@ -1156,6 +1071,10 @@ class AIAgent:
                 _loop_round += 1
                 _tool_round_start = time.monotonic()
                 self.state = State.TOOL_LOOP
+
+                # Parallel nudge: suggest batching independent tools at round 2
+                if _loop_round == 2:
+                    messages.append(ChatMessage(role="system", content=_LOOP_PARALLEL_PROMPT))
 
                 if _loop_round >= _LOOP_HARD_CEILING:
                     _budget_exhausted = True

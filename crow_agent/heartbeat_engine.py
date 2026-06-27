@@ -131,6 +131,15 @@ class HeartbeatEngine:
         self._slice_is_enabled = lambda name: True
         self._enabled_slices: set[str] = set()
 
+        # Foreman: monitors crew tasks via scratchpad (Phase 9)
+        from .scratchpad import CrewScratchpadDB
+        from .foreman import Foreman
+        self._scratchpad = CrewScratchpadDB(
+            db_path=str(db._path) if db else ":memory:"
+        ) if db else CrewScratchpadDB(":memory:")
+        self._foreman = Foreman(scratchpad=self._scratchpad)
+        self._last_foreman_tick: float = 0
+
         self._autonomous_sid = "__autonomous__"
         self._session_ready = False
 
@@ -265,6 +274,14 @@ class HeartbeatEngine:
                     await handler()
                 except Exception as e:
                     logger.debug("Heartbeat hook '%s' failed: %s", name, e)
+
+            # Foreman tick: monitor crew tasks every 60s (Phase 9)
+            if time.time() - self._last_foreman_tick >= 60:
+                self._last_foreman_tick = time.time()
+                try:
+                    self._foreman.tick()
+                except Exception:
+                    pass
 
     # ── slice handlers ────────────────────────────────────────────
 
@@ -682,6 +699,15 @@ class HeartbeatEngine:
             await self._notify(delta, reason)
         else:
             logger.info("Heartbeat decided nothing — %s", decision[:100])
+            # Always log delta changes for audit transparency
+            if delta.git_changes:
+                logger.info("Heartbeat: git dirty — %s", delta.git_changes[:200])
+            if delta.new_reports:
+                logger.info("Heartbeat: new reports — %s", delta.new_reports)
+            if delta.overdue_tasks:
+                logger.info("Heartbeat: %d overdue tasks", len(delta.overdue_tasks))
+            if delta.cron_failures:
+                logger.info("Heartbeat: %d cron failures", len(delta.cron_failures))
 
     async def _process_delegates(self, delta: ContextDelta) -> None:
         """Drain pending delegate tasks via existing task_registry machinery."""
@@ -1415,6 +1441,11 @@ class HeartbeatEngine:
             logger.info("Heartbeat: git dirty — %s", delta.git_changes[:200])
         if delta.new_reports:
             logger.info("Heartbeat: new reports — %s", delta.new_reports)
+
+        # TTL cleanup: prune old notified keys every 24h
+        if time.time() - getattr(self, '_last_notified_prune', 0) > 86400:
+            self._last_notified_prune = time.time()
+            self._notified.clear()
 
     async def _slice_compact_user_model(self) -> None:
         """Every 24h: summarize old entries from USER_MODEL.md via LLM.

@@ -20,7 +20,7 @@ from telegram.helpers import escape
 
 from crow_agent.crow_state import CrowState
 from crow_agent.paths import PROJECT_ROOT
-from crow_agent.run_agent import AIAgent, Trigger, TriggerSource
+from crow_agent.run_agent import AIAgent, Trigger, TriggerSource, _LOOP_HARD_CEILING
 from crow_agent.telegram_rich import (
     format_telegram_html,
     _safe_html_chunks,
@@ -272,12 +272,13 @@ class TelegramBot:
                 "read_file": "📖 Reading",
                 "grep_files": "🔎 Grepping",
                 "run_cmd": "⚙️ Running",
-                "run_script": "🐍 Scripting",
-                "pip_install": "📦 Installing",
                 "spawn_agent": "🤖 Spawning",
                 "delegate_task": "📋 Delegating",
                 "learn": "🧠 Learning",
                 "remember": "💭 Recalling",
+                "headroom_compress": "📦 Compressing",
+                "lsp_definition": "🔍 LSP",
+                "say": "🔊 Speaking",
                 "retrieve": "📎 Retrieving",
                 "summarize": "📝 Summarizing",
             }
@@ -292,7 +293,7 @@ class TelegramBot:
 
                 async with asyncio.timeout(600):
                     cont_turns = 0
-                    while cont_turns <= 8:
+                    while cont_turns <= _LOOP_HARD_CEILING:
                         trigger = Trigger(source=TriggerSource.USER, prompt=text, chat_id=chat_id)
                         async for event in agent.run_stream(trigger):
                             if isinstance(event, dict):
@@ -477,7 +478,7 @@ class TelegramBot:
         ogg_path.unlink(missing_ok=True)
 
         if not text:
-            await update.message.reply_text("❌ Couldn't transcribe voice. Install whisper: pip install openai-whisper")
+            await update.message.reply_text("❌ Couldn't transcribe voice. Install faster-whisper: pip install faster-whisper")
             return
 
         # Include caption as context
@@ -489,13 +490,12 @@ class TelegramBot:
         await self._run_agent(chat_id, text, update)
 
     def _transcribe_voice(self, ogg_path: Path) -> str:
-        """Transcribe .ogg voice file using whisper. Returns empty string on failure."""
+        """Transcribe .ogg voice file using faster-whisper. Returns empty string on failure."""
         try:
-            import whisper
+            from faster_whisper import WhisperModel
         except ImportError:
             return ""
 
-        # Convert ogg to wav (whisper needs wav)
         import subprocess
         wav_path = ogg_path.with_suffix('.wav')
         try:
@@ -510,11 +510,11 @@ class TelegramBot:
             return ""
 
         try:
-            # ponytail: tiny model, fast enough for real-time
-            model = whisper.load_model("tiny")
-            result = model.transcribe(str(wav_path), language="en")
+            model = WhisperModel("tiny", device="cpu", compute_type="int8")
+            segments, _ = model.transcribe(str(wav_path))
             wav_path.unlink(missing_ok=True)
-            return result.get("text", "").strip()
+            text = " ".join(s.text for s in segments)
+            return text.strip()
         except Exception:
             wav_path.unlink(missing_ok=True)
             return ""
@@ -632,7 +632,7 @@ class TelegramBot:
             )
 
 # ── Crow Log channel for autonomous Initiative output ──
-CROW_LOG_CHAT_ID = -1003985785844
+CROW_LOG_CHAT_ID = int(os.environ.get("CROW_LOG_CHAT_ID", "0"))
 
 async def send_to_crow_log(bot, text: str, initiative_id: str = "") -> bool:
     """Send a message to the Crow Log Telegram channel.

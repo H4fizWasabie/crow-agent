@@ -398,6 +398,7 @@ async def execute_plan(
     from .toolsets import ToolRegistry
     from .model_tools import register_builtins
     from .crow_state import CrowState
+    from .scratchpad import CrewScratchpadDB
     import concurrent.futures
 
     profiles = load_all_profiles()
@@ -405,24 +406,36 @@ async def execute_plan(
     failed: set[str] = set()
     running: dict[str, concurrent.futures.Future] = {}
 
-    # Thread pool for parallel workers
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+    # Connect to SQLite scratchpad for foreman monitoring
+    try:
+        sql_pad = CrewScratchpadDB(db_path=str(agent._db._path))
+    except Exception:
+        sql_pad = None
+
+    # Module-level thread pool (reused)
+    from .tool_executor import _TOOL_EXECUTOR
+    executor = _TOOL_EXECUTOR
+
+    # Shared worker tools (built once)
+    worker_tools = ToolRegistry()
+    register_builtins(worker_tools)
 
     def _run_worker(step: PlanStep) -> tuple[str, str]:
+        nonlocal sql_pad, worker_tools
         """Execute one worker step. Runs in thread. Returns (step_id, result)."""
         profile = profiles.get(step.worker)
         if not profile:
             return step.id, f"Error: unknown profile '{step.worker}'"
+
+        # Write to SQLite scratchpad for foreman monitoring
+        if sql_pad:
+            sql_pad.write_task(agent.session_id, step.id, step.worker, "running", step.task[:200])
 
         # Resolve provider for this worker
         try:
             provider = get_worker_provider(step.worker, provider_manager)
         except Exception as exc:
             return step.id, f"Error: no provider for '{step.worker}': {exc}"
-
-        # Build worker tools (profile-defined only, no spawn)
-        worker_tools = ToolRegistry()
-        register_builtins(worker_tools)
 
         # Use persistent session: worker:profile_name
         worker_session = f"worker:{step.worker}"
@@ -441,6 +454,9 @@ async def execute_plan(
 
         # Append result to scratchpad
         scratchpad.append_step(step.id, step.worker, "done", result)
+        if sql_pad:
+            status = "failed" if result.startswith("Error:") or "[PERMANENT]" in result else "done"
+            sql_pad.write_task(agent.session_id, step.id, step.worker, status, result[:200])
 
         # Inject 1-line summary to orchestrator session
         _inject_worker_summary(step.worker, step.id, result)
@@ -480,7 +496,7 @@ async def execute_plan(
                         logger.info("Crew step '%s' completed (%d/%d)", step_id, len(completed), len(plan.steps))
                     break
     finally:
-        executor.shutdown(wait=False)
+        pass  # module-level executor, no shutdown needed
 
 
 # ── Merge ─────────────────────────────────────────────────────────
@@ -494,7 +510,7 @@ def build_merge_prompt(scratchpad: CrewScratchpad) -> str:
 
     combined = "\n\n".join(done_blocks)
     return (
-        "You are a report synthesizer. Always respond in English only. Never use Chinese characters. Below are results from multiple specialized "
+        "You are a report synthesizer. Below are results from multiple specialized "
         "agents who worked on a task. Synthesize them into a single, coherent, "
         "well-structured report. Include all key findings, code, and recommendations. "
         "Be concise but complete.\n\n"
