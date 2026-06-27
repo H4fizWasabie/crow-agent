@@ -29,3 +29,4 @@ client_secret_*.json
 CROW_STATE.md
 .codegraph/
 test_results/
+.reasonix/
