@@ -5,7 +5,7 @@ Your own AI assistant. Runs on your machine, with your keys, on your terms.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/USER/crow-agent/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/H4fizWasabie/crow-agent/main/install.sh | bash
 ```
 
 That's it. The script handles Python checks, venv, clone, and install.
@@ -18,14 +18,14 @@ When it finishes, `crow` starts the web UI at http://localhost:8000.
 
 ```bash
 # Manual (if you prefer pip)
-git clone https://github.com/USER/crow-agent
+git clone https://github.com/H4fizWasabie/crow-agent
 cd crow-agent
 pip install -r requirements.txt   # or: pip install -e .
 cp .env.example .env
 crow
 
 # Windows (PowerShell)
-git clone https://github.com/USER/crow-agent
+git clone https://github.com/H4fizWasabie/crow-agent
 cd crow-agent
 python -m venv .venv
 .venv\Scripts\pip install -e .

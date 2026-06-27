@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ── Crow Agent — one-line installer ──────────────────────────────────
-# curl -fsSL https://raw.githubusercontent.com/USER/crow-agent/main/install.sh | bash
+# curl -fsSL https://raw.githubusercontent.com/H4fizWasabie/crow-agent/main/install.sh | bash
 #
 # What it does:
 #   1. Checks Python 3.12+
@@ -18,7 +18,7 @@ warn() { printf "${CYAN}→${NC} %s\n" "$1"; }
 die()  { printf "${RED}✗ %s${NC}\n" "$1"; exit 1; }
 
 INSTALL_DIR="${CROW_INSTALL_DIR:-$HOME/crow-agent}"
-REPO_URL="${CROW_REPO:-https://github.com/USER/crow-agent.git}"
+REPO_URL="${CROW_REPO:-https://github.com/H4fizWasabie/crow-agent.git}"
 BRANCH="${CROW_BRANCH:-main}"
 
 echo ""
