@@ -36,6 +36,56 @@ from .memory_tracker import MemoryTracker
 from .self_model import SelfModel
 from .crew import decompose_task, execute_plan, merge_results, CrewScratchpad
 from .turn_finalizer import finalize_turn, _detect_narrated_intent
+from .error_tracker import get_error_tracker
+from pathlib import Path as _Path
+
+# ── Checkpoint: crash recovery for mid-task interruption ──
+_CHECKPOINT_DIR = _Path.home() / ".crow_agent" / "active_tasks"
+
+def _save_checkpoint(session_id: str, goal: str, round_num: int,
+                     tool_names: list[str], last_output: str) -> None:
+    """Save a checkpoint for crash recovery."""
+    import json, time
+    _CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    snippets = [t for t in tool_names[-3:]] if tool_names else []
+    discovery = last_output.strip()[:200] if (last_output.strip() 
+                and not last_output.startswith("Processed ")) else ""
+    cp = _CHECKPOINT_DIR / f"{session_id}.json"
+    existing = {}
+    if cp.exists():
+        try:
+            existing = json.loads(cp.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    existing.update({
+        "session_id": session_id,
+        "goal": goal[:500],
+        "round": round_num,
+        "discoveries": existing.get("discoveries", []) + ([discovery] if discovery else []),
+        "tools_used": list(dict.fromkeys(existing.get("tools_used", []) + tool_names)),
+        "last_action": discovery or f"Completed round {round_num}",
+        "updated": time.time(),
+    })
+    cp.write_text(json.dumps(existing, indent=2, ensure_ascii=False))
+    logger.info("Checkpoint saved: %s round %d", session_id, round_num)
+
+def _load_checkpoint(session_id: str) -> dict | None:
+    """Load checkpoint if one exists for this session."""
+    import json
+    cp = _CHECKPOINT_DIR / f"{session_id}.json"
+    if cp.exists():
+        try:
+            return json.loads(cp.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return None
+
+def _clear_checkpoint(session_id: str) -> None:
+    """Delete checkpoint on successful completion."""
+    cp = _CHECKPOINT_DIR / f"{session_id}.json"
+    if cp.exists():
+        cp.unlink()
+        logger.info("Checkpoint cleared: %s", session_id)
 
 # Tool failure messages (shared between sync and async tool loops)
 _FAILURE_ABORT_MSG = (
@@ -43,12 +93,6 @@ _FAILURE_ABORT_MSG = (
     "Last error: {}\n\n"
     "Could you help me understand what you need? "
     "I'll try a different approach."
-)
-_FAILURE_WARNING_MSG = (
-    "[SYSTEM] {} consecutive tool calls failed. "
-    "Last error: {}. "
-    "Try a different tool or approach. "
-    "If stuck, respond with what you have."
 )
 
 # Tool timeouts
@@ -111,27 +155,16 @@ _DANGEROUS_PATTERNS: list[tuple[str, str, str]] = [
     ("git commit --amend", "git amend rewrites history", "create a new commit instead"),
     ("git push --force", "force push overwrites remote", None),
     ("git branch -D", "force delete branch", "use git branch -d for safe delete"),
+    ("rm -rf ~", "targets user home directory", "rm -rf ./build/cache"),
+    ("rm -rf $HOME", "targets user home directory", "rm -rf ./build/cache"),
 ]
 
-_LOOP_HARD_CEILING = 12  # ponytail: inlined from deleted tool_loop_guard.py
-_LOOP_THINK_IN_CODE_PROMPT = (
-    "[SYSTEM] You have used read_file/grep_files {count} times. "
-    "Per Rule 8 (Think in Code): when processing data across multiple files, "
-    "write ONE run_script instead of many individual reads. "
-    "One script replaces 10+ tool calls."
-)
+_LOOP_HARD_CEILING = 24  # ponytail: bumped from 12 for heavy tasks (120K budget)
 
 # Parallel execution nudge — injected at round 2 if no parallel tools used yet
 _LOOP_PARALLEL_PROMPT = (
     "[SYSTEM] You can call MULTIPLE tools in parallel per round. "
     "Independent reads, searches, and checks should be batched into one round."
-)
-
-# Wrap-up nudge — injected at round 8, one last chance
-_LOOP_WRAP_UP_PROMPT = (
-    "[SYSTEM] Tool round {round}. You are approaching the round limit. "
-    "Finish within 2 more rounds or the turn will end with what you have. "
-    "Use spawn_agent for remaining work if needed."
 )
 
 # Early ceiling warning — injected at ceiling-2 to prevent silent exhaustion
@@ -410,7 +443,8 @@ class AIAgent:
         skills_index: SkillsIndex | None = None,
         identity: str = (
             "You are Crow, a smart autonomous AI agent. Respond in the user's language. Be concise and direct. "
-            "Never end a turn by promising future action — if the next step is obvious, execute it now using your tools and report the result. "
+            "CRITICAL: Never narrate what you WILL do. If the next step is obvious, execute it NOW with tools and report the result. "
+            "Don't say 'Now building X' — just build X. Don't say 'Next I'll check Y' — just check Y. "
             "Don't ask for permission to act. Ask ONLY when genuinely uncertain (security, irreversible, missing critical info). "
             "Use the API native function-calling (tool_calls) for ALL tool invocations. "
             "NEVER output <invoke>, <function>, or any XML/HTML tool-call tags. "
@@ -504,6 +538,8 @@ class AIAgent:
             memory_path=memory_path or "MEMORY.md",
         )
         self._turn_count = 0
+        # Foreman: crew task monitoring (Phase 9) — set externally via app.py
+        self._foreman: Any | None = None
         # Option C: read-lock — track consecutive reads, lock after N
         self._read_streak: int = 0
         self._READ_STREAK_MAX = 3
@@ -554,6 +590,7 @@ class AIAgent:
             provider_manager=self._provider_manager,
             cached_system_content=self._cached_system_content,
             self_model=self._self_model,
+            foreman=getattr(self, '_foreman', None),
         )
 
         self._pending_skill_hints = pending_hints
@@ -715,6 +752,11 @@ class AIAgent:
         self.state = State.IDLE
         mark_user_active()
 
+        # Reset read-lock streak per turn
+        if self._read_streak != 0:
+            logger.warning("Read-lock streak non-zero at turn start (was %d) — resetting", self._read_streak)
+        self._read_streak = 0
+
         try:
             _turn_start = time.monotonic()
             messages = self._prepare_turn(trigger)
@@ -779,6 +821,10 @@ class AIAgent:
                 _loop_round += 1
                 self.state = State.TOOL_LOOP
 
+                # Parallel nudge: suggest batching independent tools at round 2
+                if _loop_round == 2:
+                    messages.append(ChatMessage(role="system", content=_LOOP_PARALLEL_PROMPT))
+
                 if _loop_round >= _LOOP_HARD_CEILING:
                     _budget_exhausted = True
                     messages.append(ChatMessage(
@@ -821,14 +867,31 @@ class AIAgent:
                 all_tool_calls.extend(tc)
                 # Option C: update read streak
                 self._update_read_streak(tc)
+                # Checkpoint: save every 3 rounds for crash recovery
+                if _loop_round % 3 == 0:
+                    _tool_names = [t.get("function", {}).get("name", "?") for t in tc if t]
+                    _save_checkpoint(self.session_id, _user_goal, _loop_round, _tool_names, full_content)
                 # Read-lock hard stop: force-break at streak >= READ_STREAK_MAX * 3 (Ren parity)
                 if self._read_streak >= self._READ_STREAK_MAX * 3:
                     logger.warning("Read-lock hard stop (async): streak=%d", self._read_streak)
+                    et = get_error_tracker()
+                    result = et.record("read_lock", f"streak={self._read_streak}, round={_loop_round}")
+                    if result["escalate"]:
+                        full_content = (
+                            "[DONE] Task stopped — research loop limit reached. "
+                            f"After {result['count']} attempts the read-lock backstop fired. "
+                            "Try a different approach or ask me more specifically."
+                        )
+                    else:
+                        full_content = "[CONTINUE] Read-lock engaged. Task will resume on next heartbeat."
                     tool_calls = None
-                    full_content = "[CONTINUE] Read-lock engaged. Task will resume on next heartbeat."
                     break
 
                 if abort:
+                    et = get_error_tracker()
+                    if tc:
+                        last_tool = tc[-1].get("function", {}).get("name", "?")
+                        et.record("tool_fail", f"{last_tool}: {last_error[:100]}")
                     tool_calls = None
                     full_content = _FAILURE_ABORT_MSG.format(last_error)
                     break
@@ -845,123 +908,48 @@ class AIAgent:
 
                 # Call LLM for next round (async)
                 resp = await _loop.run_in_executor(
-                    None, self._provider.chat, messages, self._get_tools()
+                    None, self._provider.chat, messages, self._get_tools_filtered()
                 )
                 full_content, tool_calls = _merge_text_tools(resp.content, resp.tool_calls)
                 total_prompt += resp.usage.get("prompt_tokens", 0)
                 total_completion += resp.usage.get("completion_tokens", 0)
 
-            # --- Post-tool nudge: intercept narration before RESPOND ---
-            # After the tool loop, if LLM wrote text without tools and without
-            # [DONE]/[CONTINUE], nudge up to 2 times. On 3rd attempt: guard prevents
-            # narration leakage by overwriting to [CONTINUE].
-            if full_content.strip() and not _budget_exhausted:
-                _done_or_continue = (
-                    ("[DONE]" in full_content) or ("[CONTINUE]" in full_content)
-                    or _detect_narrated_intent(full_content)
-                )
-                if not _done_or_continue:
-                    _nudge_count = 0
-                    while _nudge_count < 3:
-                        _nudge_count += 1
-                        _nudge_text = (_POST_TOOL_NUDGE_2 if _nudge_count >= 2
-                                       else _POST_TOOL_NUDGE_1)
-                        messages.append(ChatMessage(role="system", content=_nudge_text))
-                        resp = await _loop.run_in_executor(
-                            None, self._provider.chat, messages, self._get_tools()
-                        )
-                        full_content, post_nudge_tools = _merge_text_tools(
-                            resp.content, resp.tool_calls
-                        )
-                        total_prompt += resp.usage.get("prompt_tokens", 0)
-                        total_completion += resp.usage.get("completion_tokens", 0)
-                        if post_nudge_tools:
-                            # LLM got the hint — re-enter tool loop
-                            tool_calls = post_nudge_tools
-                            while tool_calls:
-                                _loop_round += 1
-                                if _loop_round >= _LOOP_HARD_CEILING:
-                                    _budget_exhausted = True
-                                    messages.append(ChatMessage(
-                                        role="system",
-                                        content=_BUDGET_EXHAUSTION_PROMPT
-                                    ))
-                                    try:
-                                        resp = await _loop.run_in_executor(
-                                            None, self._provider.chat, messages, tools=None
-                                        )
-                                        full_content, _ = _merge_text_tools(resp.content, [])
-                                        total_prompt += resp.usage.get("prompt_tokens", 0)
-                                        total_completion += resp.usage.get("completion_tokens", 0)
-                                    except Exception:
-                                        pass
-                                    break
+                # Post-tool nudge (v3): no [DONE]/[CONTINUE]. If LLM has text, deliver it.
+                if not tool_calls and not _budget_exhausted and full_content:
+                    if full_content.strip():
+                        break  # meaningful text = done
+                    # Empty response — nudge once
+                    messages.append(ChatMessage(role="assistant", content=full_content))
+                    messages.append(ChatMessage(role="system", content=_POST_TOOL_NUDGE_1))
+                    resp = await _loop.run_in_executor(
+                        None, self._provider.chat, messages, self._get_tools_filtered()
+                    )
+                    full_content, tool_calls = _merge_text_tools(resp.content, resp.tool_calls)
+                    total_prompt += resp.usage.get("prompt_tokens", 0)
+                    total_completion += resp.usage.get("completion_tokens", 0)
+                    if not tool_calls:
+                        if full_content.strip():
+                            break  # got text after nudge
+                        logger.warning("Empty response after nudge — delivering as-is.")
 
-                                # Early ceiling warning at ceiling-2 (Ren parity)
-                                if _loop_round >= _LOOP_HARD_CEILING - 2:
-                                    messages.append(ChatMessage(
-                                        role="system",
-                                        content=_CEILING_EARLY_WARNING.format(
-                                            round=_loop_round, ceiling=_LOOP_HARD_CEILING
-                                        ),
-                                    ))
-                                messages.append(ChatMessage(
-                                    role="assistant",
-                                    content=full_content,
-                                    tool_calls=tool_calls,
-                                ))
-                                tc, consecutive_failures, last_error, abort = \
-                                    await _loop.run_in_executor(
-                                        None, self._execute_tool_calls,
-                                        tool_calls, messages
-                                    )
-                                all_tool_calls.extend(tc)
-                                # Option C: update read streak + hard stop
-                                self._update_read_streak(tc)
-                                if self._read_streak >= self._READ_STREAK_MAX * 3:
-                                    logger.warning("Read-lock hard stop (nudge re-entry): streak=%d", self._read_streak)
-                                    tool_calls = None
-                                    full_content = "[CONTINUE] Read-lock engaged. Task will resume on next heartbeat."
-                                    break
-                                if abort:
-                                    tool_calls = None
-                                    full_content = _FAILURE_ABORT_MSG.format(last_error)
-                                    break
-                                resp = await _loop.run_in_executor(
-                                    None, self._provider.chat, messages,
-                                    self._get_tools()
-                                )
-                                full_content, tool_calls = _merge_text_tools(
-                                    resp.content, resp.tool_calls
-                                )
-                                total_prompt += resp.usage.get("prompt_tokens", 0)
-                                total_completion += resp.usage.get("completion_tokens", 0)
-                            break  # tools happened, exit nudge loop
-                        if "[DONE]" in full_content or "[CONTINUE]" in full_content or _detect_narrated_intent(full_content):
-                            if not ("[DONE]" in full_content or "[CONTINUE]" in full_content):
-                                full_content = f"[CONTINUE] {full_content}"
-                            break  # LLM signaled, accept it
-                        if not full_content.strip():
-                            # Guard: LLM returned empty — inject fallback to prevent ghosting
-                            logger.warning("Post-tool nudge: empty response — injecting fallback")
-                            full_content = f"[CONTINUE] Task in progress. Tools used: {len(all_tool_calls)}."
-                            break  # fallback set, exit nudge loop
-                    else:
-                        # Guard: all 3 nudges failed — overwrite to prevent leakage
-                        logger.warning(
-                            "Post-tool nudge exhausted in stream path. "
-                            "Marking [CONTINUE]."
-                        )
-                        full_content = "[CONTINUE] Working on this task. Will resume shortly."
-
-            # --- RESPOND (via turn finalizer) ---
+            # ── RESPOND (finalize, persist, learn) ──
             # Safety net: never deliver empty response to user (ghosting bug)
             if not full_content.strip():
                 if all_tool_calls:
-                    full_content = f"[CONTINUE] Processed {len(all_tool_calls)} tool(s). Task in progress."
+                    full_content = f"Processed {len(all_tool_calls)} tool(s). Last: {all_tool_calls[-1].get('function',{}).get('name','?')}"
+                    # Save checkpoint so user can resume — LLM went silent mid-task
+                    _tool_names = []
+                    for tc_call in all_tool_calls[-3:]:
+                        n = tc_call.get("function", {}).get("name", "")
+                        if n:
+                            _tool_names.append(n)
+                    _save_checkpoint(self.session_id, _user_goal, _loop_round, _tool_names, "LLM went silent after tools")
                 else:
                     full_content = "Idle. No active tasks."
                 logger.warning("Empty response guarded — fallback: %s", full_content[:80])
+            else:
+                # Only clear checkpoint on a real response
+                _clear_checkpoint(self.session_id)
             final_text = finalize_turn(
                 self,
                 final_text=full_content,
@@ -1102,6 +1090,11 @@ class AIAgent:
         self.state = State.IDLE
         mark_user_active()
 
+        # Reset read-lock streak per turn
+        if self._read_streak != 0:
+            logger.warning("Read-lock streak non-zero at turn start (was %d) — resetting", self._read_streak)
+        self._read_streak = 0
+
         try:
             _turn_start = time.monotonic()
             messages = self._prepare_turn(trigger)
@@ -1157,6 +1150,10 @@ class AIAgent:
                 _tool_round_start = time.monotonic()
                 self.state = State.TOOL_LOOP
 
+                # Parallel nudge: suggest batching independent tools at round 2
+                if _loop_round == 2:
+                    messages.append(ChatMessage(role="system", content=_LOOP_PARALLEL_PROMPT))
+
                 if _loop_round >= _LOOP_HARD_CEILING:
                     _budget_exhausted = True
                     messages.append(ChatMessage(
@@ -1193,14 +1190,31 @@ class AIAgent:
                 all_tool_calls.extend(tc)
                 # Option C: update read streak
                 self._update_read_streak(tc)
+                # Checkpoint: save every 3 rounds for crash recovery
+                if _loop_round % 3 == 0:
+                    _tool_names = [t.get("function", {}).get("name", "?") for t in tc if t]
+                    _save_checkpoint(self.session_id, _user_goal, _loop_round, _tool_names, response.content)
                 # Read-lock hard stop: force-break at streak >= READ_STREAK_MAX * 3 (Ren parity)
                 if self._read_streak >= self._READ_STREAK_MAX * 3:
                     logger.warning("Read-lock hard stop: streak=%d", self._read_streak)
-                    response.content = "[CONTINUE] Read-lock engaged. Task will resume on next heartbeat."
+                    et = get_error_tracker()
+                    result = et.record("read_lock", f"streak={self._read_streak}, round={_loop_round}")
+                    if result["escalate"]:
+                        response.content = (
+                            "[DONE] Task stopped — research loop limit reached. "
+                            f"After {result['count']} attempts the read-lock backstop fired. "
+                            "Try a different approach or ask me more specifically."
+                        )
+                    else:
+                        response.content = "[CONTINUE] Read-lock engaged. Task will resume on next heartbeat."
                     response.tool_calls = None
                     break
 
                 if abort:
+                    et = get_error_tracker()
+                    if tc:
+                        last_tool = tc[-1].get("function", {}).get("name", "?")
+                        et.record("tool_fail", f"{last_tool}: {last_error[:100]}")
                     response.content = _FAILURE_ABORT_MSG.format(last_error)
                     response.tool_calls = None
                     break
@@ -1227,16 +1241,11 @@ class AIAgent:
                 total_prompt += response.usage.get("prompt_tokens", 0)
                 total_completion += response.usage.get("completion_tokens", 0)
 
-                # Post-tool nudge: LLM wrote status update instead of continuing.
-                # Two escalating retries. Text preserved as context each time.
-                # Only fires when: no tool_calls, not budget-exhausted, has content.
+                # Post-tool nudge (v3): no [DONE]/[CONTINUE]. If LLM has text, deliver it.
                 if not response.tool_calls and not _budget_exhausted and response.content:
-                    # If LLM signaled [DONE], [CONTINUE], or narrated intent, accept it
-                    if "[DONE]" in response.content or "[CONTINUE]" in response.content or _detect_narrated_intent(response.content):
-                        if not ("[DONE]" in response.content or "[CONTINUE]" in response.content):
-                            response.content = f"[CONTINUE] {response.content}"
-                        break
-                    # Retry 1: firm reminder
+                    if response.content.strip():
+                        break  # meaningful text = done
+                    # Empty response — nudge once
                     messages.append(ChatMessage(role="assistant", content=response.content))
                     messages.append(ChatMessage(role="system", content=_POST_TOOL_NUDGE_1))
                     response = self._provider.chat(messages=messages, tools=self._get_tools_filtered())
@@ -1245,30 +1254,21 @@ class AIAgent:
                     )
                     total_prompt += response.usage.get("prompt_tokens", 0)
                     total_completion += response.usage.get("completion_tokens", 0)
-                    # Retry 2: hard demand (if still narrating)
-                    if not response.tool_calls and response.content:
-                        messages.append(ChatMessage(role="assistant", content=response.content))
-                        messages.append(ChatMessage(role="system", content=_POST_TOOL_NUDGE_2))
-                        response = self._provider.chat(messages=messages, tools=self._get_tools_filtered())
-                        response.content, response.tool_calls = _merge_text_tools(
-                            response.content, response.tool_calls
-                        )
-                        total_prompt += response.usage.get("prompt_tokens", 0)
-                        total_completion += response.usage.get("completion_tokens", 0)
-                        # Guard: if still narrating after 3 attempts, don't leak
-                        # status text to user. Task will resume on next heartbeat.
-                        if not response.tool_calls:
-                            logger.warning("Post-tool nudge exhausted (3 attempts). Marking [CONTINUE].")
-                            response.content = "[CONTINUE] Working on this task. Will resume shortly."
+                    if not response.tool_calls:
+                        if response.content.strip():
+                            break  # got text after nudge
+                        logger.warning("Empty response after nudge — delivering as-is.")
 
-            # --- RESPOND (via turn finalizer) ---
+            # ── RESPOND (finalize, persist, learn) ──
             # Safety net: never deliver empty response to user (ghosting bug)
             if not response.content.strip():
                 if tool_calls:
-                    response.content = f"[CONTINUE] Processed {len(tool_calls)} tool(s). Task in progress."
+                    response.content = f"Processed {len(tool_calls)} tool(s). Last: {tool_calls[-1].get('function',{}).get('name','?')}"
                 else:
                     response.content = "Idle. No active tasks."
                 logger.warning("Empty response guarded — fallback: %s", response.content[:80])
+            else:
+                _clear_checkpoint(self.session_id)
             final_text = finalize_turn(
                 self,
                 final_text=response.content,

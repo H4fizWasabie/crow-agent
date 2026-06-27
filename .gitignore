@@ -30,3 +30,5 @@ CROW_STATE.md
 .codegraph/
 test_results/
 .reasonix/
+.pi/
+start-bot.sh

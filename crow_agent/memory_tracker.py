@@ -212,9 +212,24 @@ class MemoryTracker:
             t.start()
 
         self._state["last_session_id"] = session_id
+        self._dirty = True
 
         self._save_state()
         return extractions
+
+    def note_matched_skills(self, skills: list[tuple[str, str]]) -> None:
+        """Record matched skills for context assembly."""
+        self._skill_buffer = skills
+        self._dirty = True
+
+    def inject_learnings(self) -> str | None:
+        """Return a summary of recent learnings for context injection."""
+        if not self._skill_buffer:
+            return None
+        lines = ["## Recent Learnings"]
+        for name, source in self._skill_buffer[:5]:
+            lines.append(f"- {name} ({source})")
+        return "\n".join(lines)
 
     def _load_state(self) -> dict[str, Any]:
         if self._state_path.exists():

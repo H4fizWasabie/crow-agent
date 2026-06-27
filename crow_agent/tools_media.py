@@ -125,6 +125,51 @@ def register_tools(registry: Any, **kwargs: Any) -> None:
             return f"Hear error: {exc}"
 
     @registry.register(
+        name="see_image",
+        description="Analyse an image using OpenRouter vision (Gemma 4 31B). Provide an image path and a prompt/question about it. Good for reading screenshots, invoices, dashboards."
+    )
+    def see_image(image_path: str, prompt: str = "Describe this image in detail.") -> str:
+        import base64
+        import httpx
+        from pathlib import Path
+
+        path = Path(image_path)
+        if not path.exists():
+            return f"File not found: {image_path}"
+        if path.suffix.lower() not in (".jpg", ".jpeg", ".png", ".bmp", ".webp"):
+            return f"Unsupported image format: {path.suffix}. Supported: JPG, PNG, BMP, WEBP."
+
+        api_key = os.environ.get("OPENROUTER_API_KEY", "")
+        if not api_key:
+            return "OPENROUTER_API_KEY not set. Vision unavailable."
+
+        ext = path.suffix.lower()
+        mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                    ".png": "image/png", ".bmp": "image/bmp",
+                    ".webp": "image/webp"}
+        mime = mime_map.get(ext, "image/png")
+        data = base64.b64encode(path.read_bytes()).decode()
+
+        try:
+            resp = httpx.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": "google/gemma-4-31b-it",
+                    "messages": [{"role": "user", "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}},
+                    ]}],
+                    "max_tokens": 4096,
+                },
+                timeout=120,
+            )
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"]
+        except Exception as exc:
+            return f"Vision error: {exc}"
+
+    @registry.register(
         description="Convert text to speech using edge-tts and save as audio file (.ogg). Default voice: English male (Andrew)."
     )
     def say(text: str, voice: str = "en-US-AndrewNeural") -> str:

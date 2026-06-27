@@ -1,10 +1,12 @@
-"""Embedding-based semantic search via OpenRouter API.
+"""Embedding-based semantic search — local model primary, OpenRouter fallback.
 
-ponytail: single function + inline mtime re-embed. No watcher threads,
-no vector DB, no hybrid scoring. LLM merges lexical + semantic results.
+Uses sentence-transformers/all-MiniLM-L6-v2 locally (80MB, free, no API).
+Falls back to OpenRouter API if model not installed.
 
 Interface:
     semantic_search(query, items, top_k) -> list[tuple[str, float]]
+    embed(texts) -> np.ndarray | None
+    store_memory_embedding, precompute_items (cache helpers)
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ import requests
 
 logger = logging.getLogger("crow_agent.embeddings")
 
-_MODEL = "sentence-transformers/all-mpnet-base-v2"
+_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 _API_URL = "https://openrouter.ai/api/v1/embeddings"
 _API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 _TIMEOUT = 15
@@ -27,21 +29,61 @@ _TIMEOUT = 15
 _CACHE: dict[str, tuple[float, np.ndarray]] = {}
 _MAX_CACHE_SIZE = 200
 
+# Lazy-loaded local model
+_local_model = None
+_local_model_failed = False
+
+
+def _get_local_model():
+    """Lazy-load sentence-transformers model. Returns None if unavailable."""
+    global _local_model, _local_model_failed
+    if _local_model is not None:
+        return _local_model
+    if _local_model_failed:
+        return None
+    try:
+        from sentence_transformers import SentenceTransformer
+        _local_model = SentenceTransformer(_MODEL_NAME)
+        logger.info("Loaded local embedding model: %s", _MODEL_NAME)
+        return _local_model
+    except ImportError:
+        logger.info("sentence-transformers not installed — using OpenRouter fallback")
+        _local_model_failed = True
+        return None
+    except Exception:
+        logger.warning("Local embedding model failed to load, using OpenRouter")
+        _local_model_failed = True
+        return None
+
 
 def _evict_lru() -> None:
     if len(_CACHE) <= _MAX_CACHE_SIZE:
         return
-    sorted_keys = sorted(_CACHE.items(), key=lambda x: x[1][0])  # oldest first
+    sorted_keys = sorted(_CACHE.items(), key=lambda x: x[1][0])
     overage = len(_CACHE) - _MAX_CACHE_SIZE
     for key, _ in sorted_keys[:overage]:
         del _CACHE[key]
 
 
 def embed(texts: list[str]) -> np.ndarray | None:
+    """Embed texts — local model first, OpenRouter API fallback."""
     if not texts:
         return None
+
+    # Primary: local sentence-transformers
+    model = _get_local_model()
+    if model is not None:
+        try:
+            vectors = model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
+            if vectors.ndim == 1:
+                vectors = vectors.reshape(1, -1)
+            return np.array(vectors, dtype=np.float32)
+        except Exception:
+            logger.debug("Local embedding failed, trying OpenRouter", exc_info=True)
+
+    # Fallback: OpenRouter API
     if not _API_KEY:
-        logger.warning("OPENROUTER_API_KEY not set — semantic search disabled")
+        logger.warning("No embedding available — install sentence-transformers or set OPENROUTER_API_KEY")
         return None
     try:
         resp = requests.post(
@@ -50,14 +92,14 @@ def embed(texts: list[str]) -> np.ndarray | None:
                 "Authorization": f"Bearer {_API_KEY}",
                 "Content-Type": "application/json",
             },
-            json={"model": _MODEL, "input": texts},
+            json={"model": _MODEL_NAME, "input": texts},
             timeout=_TIMEOUT,
         )
         resp.raise_for_status()
         data = resp.json()
         return np.array([d["embedding"] for d in data["data"]], dtype=np.float32)
     except Exception:
-        logger.debug("Embedding API call failed", exc_info=True)
+        logger.debug("OpenRouter embedding failed", exc_info=True)
         return None
 
 

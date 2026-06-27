@@ -122,6 +122,9 @@ def register_default_sources(
 
     # Semantic search results
     def _build_semantic(user_input: str, db: Any) -> str | None:
+        # Skip for trivial queries (hi, ok, thanks, etc.)
+        if len(user_input.strip().split()) <= 2:
+            return None
         try:
             from .embeddings import semantic_search
             items: dict[str, str] = {}
@@ -165,10 +168,9 @@ def register_default_sources(
     # Tool budget notice
     def _build_budget_notice(user_input: str, db: Any) -> str | None:
         return (
-            "\n\n📋 Tool Budget: max 20 tool calls, 12 rounds per turn. "
-            "Batch independent calls in parallel. At round 4 you'll be offered "
-            "spawn_agent delegation if the task needs deep work. "
-            "See RULES.md Think in Code (#13-14) for tool hierarchy."
+            "\n\n📋 Tool Budget: 12 rounds per turn, parallel batching suggested at round 2. "
+            "If more work remains, say [CONTINUE] to resume on next heartbeat. "
+            "See Think in Code directive for tool efficiency guidance."
         )
     sources.append(ContextSource("Budget Notice", TIER_LOW, _build_budget_notice))
 

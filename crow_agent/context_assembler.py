@@ -21,6 +21,7 @@ from .prompt_builder import (
     build_system_message,
     build_user_turn_message,
     count_tokens,
+    resolve_context_budget,
     truncate_history_by_budget,
 )
 from .run_agent import _load_session_state, _save_session_state, TriggerSource  # soulmates
@@ -50,6 +51,7 @@ def assemble_context(
     provider_manager: Any | None = None,
     cached_system_content: list[dict[str, str]] | None = None,
     self_model: SelfModel | None = None,
+    foreman: Any | None = None,
 ) -> tuple[list[ChatMessage], list[str], set[str]]:
     """Build messages for the CALL phase from user input + stored context.
 
@@ -134,7 +136,7 @@ def assemble_context(
     if dropped_turns:
         dropped_summary = _summarize_turns(dropped_turns, provider, provider_manager)
         if dropped_summary:
-            trimmed_history[0]["content"] = dropped_summary
+            trimmed_history.insert(0, {"role": "system", "content": dropped_summary})
 
     user_content = build_user_turn_message(
         user_input=user_input,
@@ -142,7 +144,7 @@ def assemble_context(
         fts_results=fts_results,
     )
     # -- Tiered context injection (Move 2) --
-    _budget = int(os.environ.get("CROW_CONTEXT_BUDGET", "35000"))
+    _budget = resolve_context_budget(provider)
     _model = provider.config.model
     _used = count_tokens(_flatten(system_content), model=_model)
     _used += count_tokens(_flatten(user_content), model=_model)
@@ -215,6 +217,12 @@ def assemble_context(
     else:
         status = _build_self_status(db, provider, history)
     messages.insert(1, ChatMessage(role="system", content=status))
+
+    # Inject foreman crew updates (Phase 9)
+    if foreman is not None:
+        foreman_text = foreman.context_text()
+        if foreman_text:
+            messages.insert(2, ChatMessage(role="system", content=foreman_text))
 
     return messages, pending_skill_hints or [], shown_reports or set()
 

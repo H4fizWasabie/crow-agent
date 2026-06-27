@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,7 @@ from typing import Any
 logger = logging.getLogger("crow_agent.prompts")
 
 # Default token budget — 35K matches VPS production data (clean turns: 10K-28K).
-DEFAULT_CONTEXT_BUDGET = 35_000
+DEFAULT_CONTEXT_BUDGET = 120_000
 # Tokens reserved for the model's response (never given to history)
 RESPONSE_RESERVE = 4_096
 # Minimum full turns to keep (newest), even when over budget

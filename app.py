@@ -228,13 +228,17 @@ def _agent(session_id: str = "default") -> AIAgent:
     active = _pm.active
     if not active:
         raise RuntimeError("No active provider. Add one at /providers.")
-    return AIAgent(
+    agent = AIAgent(
         session_id=session_id,
         provider_name=active,
         provider_manager=_pm,
         tool_registry=_tools,
         skills_index=_skills,
     )
+    # Wire foreman for crew task monitoring (Phase 9)
+    if _heartbeat is not None:
+        agent._foreman = getattr(_heartbeat, '_foreman', None)
+    return agent
 
 
 # --- helpers ---

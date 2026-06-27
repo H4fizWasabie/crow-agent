@@ -29,6 +29,11 @@ _INTENT_PATTERNS = [
     r"\bbiar (saya|aku)\b",               # "biar saya" = let me
     r"\bsaya cuba\b",                     # "saya cuba" = I'll try
     r"\bsaya perlu\b",                    # "saya perlu" = I need to
+    r"\bnow \w+ing\b",     # "now building", "now creating", "now setting up"
+    r"\bnext,?\b",          # "next", "next I'll"
+    r"\bthen,?\b",          # "then", "then I'll"
+    r"\bwill now\b",        # "will now proceed"
+    r"\btime to\b",         # "time to build"
 ]
 
 
