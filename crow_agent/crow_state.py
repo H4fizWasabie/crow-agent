@@ -607,10 +607,10 @@ class CrowState:
         except (ValueError, TypeError):
             return None
 
-        # If deadline is naive, interpret as configured timezone (CROWD_TZ, default Asia/Kuala_Lumpur)
+        # If deadline is naive, interpret as configured timezone (CROWD_TZ, default UTC)
         if dt.tzinfo is None:
             import os
-            tz_name = os.environ.get("CROWD_TZ", "Asia/Kuala_Lumpur")
+            tz_name = os.environ.get("CROWD_TZ", "UTC")
             dt = dt.replace(tzinfo=ZoneInfo(tz_name))
 
         pattern = repeat.strip().lower()

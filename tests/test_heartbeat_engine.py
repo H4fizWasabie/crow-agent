@@ -21,7 +21,7 @@ class TestContextDelta:
         assert not d.is_empty
 
     def test_not_empty_with_cron_failures(self):
-        d = ContextDelta(cron_failures=["malaysia_news"])
+        d = ContextDelta(cron_failures=["daily_report"])
         assert not d.is_empty
 
     def test_not_empty_with_git_changes(self):

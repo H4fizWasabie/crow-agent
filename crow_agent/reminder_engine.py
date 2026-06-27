@@ -11,17 +11,17 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-# Configurable timezone — env CROWD_TZ (default Asia/Kuala_Lumpur)
-_CROWD_TZ_NAME = os.environ.get("CROWD_TZ", "Asia/Kuala_Lumpur")
+# Configurable timezone — env CROWD_TZ (default UTC)
+_CROWD_TZ_NAME = os.environ.get("CROWD_TZ", "UTC")
 _TZ = ZoneInfo(_CROWD_TZ_NAME)
 
 logger = logging.getLogger("crow_agent.reminder")
 
-# Load Malaysia public holidays from bundled data file.
-# Auto-updated by scripts/update_holidays.py (Calendarific API).
-_HOLIDAYS_FILE = Path(__file__).parent / "holidays_my.json"
+# Load holidays from user-configured file.
+# Set CROWD_HOLIDAYS=/path/to/holidays.json in .env to enable holiday-aware reminders.
+_HOLIDAYS_FILE = Path(os.environ.get("CROWD_HOLIDAYS", ""))
 _HOLIDAYS: set[str] = set()
-if _HOLIDAYS_FILE.exists():
+if _HOLIDAYS_FILE and _HOLIDAYS_FILE.exists():
     import json
     _HOLIDAYS = set(json.loads(_HOLIDAYS_FILE.read_text()).get("holidays", []))
 
@@ -144,7 +144,7 @@ class ReminderEngine:
                 if not isinstance(deadline_dt, datetime):
                     deadline_dt = datetime(deadline_dt.year, deadline_dt.month, deadline_dt.day)
                 if deadline_dt.tzinfo is None:
-                    # Treat naive deadlines as Malaysia time (UTC+8)
+                    # Treat naive deadlines as configured timezone
                     deadline_dt = deadline_dt.replace(tzinfo=_TZ)
             except (ValueError, TypeError):
                 continue
@@ -181,7 +181,7 @@ class ReminderEngine:
 
     @staticmethod
     def next_holiday(today: str | None = None) -> str | None:
-        """Return the next Malaysia public holiday date after today, or None."""
+        """Return the next holiday date after today, or None if no holidays configured."""
         from datetime import date
         now = date.fromisoformat(today) if today else date.today()
         for h in sorted(_HOLIDAYS):
