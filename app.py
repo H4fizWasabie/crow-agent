@@ -37,6 +37,16 @@ PG_DSN: str | None = os.environ.get("CROW_PRICES_DB_URL") or None
 # If unset, auth is disabled (safe when bound to localhost).
 _WEB_TOKEN: str | None = os.environ.get("CROW_WEB_TOKEN") or None
 
+
+def _any_env_provider() -> bool:
+    """Check if any provider is configurable via environment variables."""
+    for key, val in os.environ.items():
+        if key.endswith("_API_KEY") and key != "API_KEY" and val.strip():
+            prefix = key[: -len("_API_KEY")]
+            if os.environ.get(f"{prefix}_BASE_URL") and os.environ.get(f"{prefix}_MODEL"):
+                return True
+    return False
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 logger = logging.getLogger("crow_agent.web")
 
@@ -245,10 +255,6 @@ def _register_metric(label: str, icon: str, color: str, value_fn):
         "label": label, "icon": icon, "color": color, "value_fn": value_fn
     })
 
-_register_metric("Products", "📦", "blue", lambda _: _pg_val("SELECT count(*) FROM products"))
-_register_metric("Suppliers", "🏭", "green", lambda _: _pg_val("SELECT count(*) FROM suppliers"))
-_register_metric("Prices", "💰", "amber", lambda _: _pg_val("SELECT count(*) FROM prices"))
-_register_metric("Active Sources", "🔗", "purple", lambda _: _pg_val("SELECT count(*) FROM sources WHERE is_active = true"))
 _register_metric("Cron Jobs", "⏰", "sky", lambda _: str(len(_cron.jobs())))
 _register_metric("Sessions", "📂", "pink", lambda _: _sqlite_val("SELECT count(*) FROM sessions"))
 
@@ -407,7 +413,28 @@ def price_search(request: Request, q: str = "") -> dict:
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
+    if not _pm.active and not _any_env_provider():
+        return templates.TemplateResponse(request, "setup.html", {"tab": "setup"})
     return templates.TemplateResponse(request, "index.html", {"tab": "chat"})
+
+
+@app.post("/setup", response_class=HTMLResponse)
+async def setup_submit(request: Request) -> HTMLResponse:
+    form = await request.form()
+    key = form.get("api_key", "").strip()
+    base_url = form.get("base_url", "https://openrouter.ai/api/v1").strip()
+    model = form.get("model", "google/gemini-2.0-flash-001").strip()
+    if not key:
+        return templates.TemplateResponse(request, "setup.html", {
+            "tab": "setup", "error": "API key is required."
+        })
+    entry = ProviderEntry(
+        name="openrouter", base_url=base_url, model=model, api_key=key
+    )
+    _pm.add(entry)
+    # Reload agent with new provider
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/", status_code=303)
 
 
 @app.get("/sessions", response_class=HTMLResponse)

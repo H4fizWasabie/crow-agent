@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Crow — Setup</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d1117; color: #c9d1d9;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh;
+    }
+    .setup-box {
+      max-width: 440px; width: 100%; padding: 40px 32px;
+      background: #161b22; border: 1px solid #30363d;
+      border-radius: 12px; text-align: center;
+    }
+    h1 { font-size: 48px; margin-bottom: 4px; }
+    h2 { font-size: 22px; margin-bottom: 4px; color: #f0f6fc; }
+    p.sub { color: #8b949e; margin-bottom: 28px; font-size: 14px; }
+    form { text-align: left; }
+    label { display: block; margin-bottom: 6px; font-weight: 600; font-size: 13px; color: #f0f6fc; }
+    input, select {
+      width: 100%; padding: 10px 12px; border-radius: 8px;
+      border: 1px solid #30363d; background: #0d1117; color: #c9d1d9;
+      font-size: 14px; margin-bottom: 16px;
+    }
+    input:focus, select:focus { outline: none; border-color: #58a6ff; }
+    button {
+      width: 100%; padding: 12px; background: #238636; color: white;
+      border: none; border-radius: 8px; font-size: 15px; font-weight: 600;
+      cursor: pointer; margin-top: 4px;
+    }
+    button:hover { background: #2ea043; }
+    .error { background: #ff6b6b20; border: 1px solid #ff6b6b40; color: #ff6b6b; padding: 10px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; }
+    .footer { color: #8b949e; font-size: 12px; margin-top: 20px; line-height: 1.6; }
+    .footer a { color: #58a6ff; }
+    code { background: #21262d; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="setup-box">
+    <h1>&#x1F426;&#x200D;&#x2B1B;</h1>
+    <h2>Welcome to Crow</h2>
+    <p class="sub">One step to get started.</p>
+
+    {% if error %}
+    <div class="error">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="/setup">
+      <label for="api_key">OpenRouter API Key</label>
+      <input id="api_key" name="api_key" type="password" placeholder="sk-or-v1-..." required />
+
+      <label for="model">Model</label>
+      <select id="model" name="model">
+        <option value="google/gemini-2.0-flash-001">Gemini 2.0 Flash (fast, free)</option>
+        <option value="google/gemini-2.5-pro-exp-03-25">Gemini 2.5 Pro (smart, free*)</option>
+        <option value="meta-llama/llama-4-maverick:free">Llama 4 Maverick (free)</option>
+        <option value="deepseek/deepseek-chat-v3-0324">DeepSeek V3 (cheap)</option>
+        <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet (paid)</option>
+      </select>
+
+      <input type="hidden" name="base_url" value="https://openrouter.ai/api/v1" />
+
+      <button type="submit">Start Using Crow &rarr;</button>
+    </form>
+
+    <div class="footer">
+      <p>Don't have a key? <a href="https://openrouter.ai/keys" target="_blank">Get one free at openrouter.ai &rarr;</a></p>
+      <p style="margin-top:6px;">Prefer .env? Set <code>OPENROUTER_API_KEY</code> + <code>_BASE_URL</code> + <code>_MODEL</code> and restart.</p>
+    </div>
+  </div>
+</body>
+</html>
