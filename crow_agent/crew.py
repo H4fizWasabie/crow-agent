@@ -63,10 +63,11 @@ class CrewScratchpad:
         # Create empty file
         Path(self.path).touch()
 
-    def append_step(self, step_id: str, worker: str, status: str, content: str) -> None:
+    def append_step(self, step_id: str, worker: str, status: str, content: str, step_type: str = "") -> None:
         """Append a ## STEP block — safe for parallel workers."""
+        type_tag = f" | type: {step_type}" if step_type else ""
         block = (
-            f"\n## STEP: {step_id} | worker: {worker} | status: {status}\n"
+            f"\n## STEP: {step_id} | worker: {worker} | status: {status}{type_tag}\n"
             f"{content}\n"
             f"## END\n"
         )
@@ -481,8 +482,19 @@ async def execute_plan(
             db_path=db_path,
         )
 
-        # Append result to scratchpad
-        scratchpad.append_step(step.id, step.worker, "done", result)
+        # Append result to scratchpad with type tag
+        _type_map = {
+            "architect": "decision",
+            "code-reviewer": "review",
+            "code-worker": "code",
+            "debugger": "investigation",
+            "deep-worker": "implementation",
+            "researcher": "research",
+            "verifier": "verification",
+            "test-writer": "test",
+        }
+        scratchpad.append_step(step.id, step.worker, "done", result,
+                               step_type=_type_map.get(step.worker, "output"))
         if sql_pad:
             status = "failed" if result.startswith("Error:") or "[PERMANENT]" in result else "done"
             sql_pad.write_task(agent.session_id, step.id, step.worker, status, result[:200])
