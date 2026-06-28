@@ -362,7 +362,16 @@ class FallbackProvider:
             logger.warning("Primary %s timeout — falling back", self._primary.config.name)
         except Exception:
             logger.warning("Primary %s unexpected error — falling back", self._primary.config.name, exc_info=True)
-        return self._fallback.chat(messages, tools, max_tokens)
+        try:
+            return self._fallback.chat(messages, tools, max_tokens)
+        except Exception as e:
+            logger.error("Both primary and fallback failed: %s", e)
+            return ChatResponse(
+                content=f"⚠️ Both providers failed. {e}",
+                tool_calls=[],
+                finish_reason="error",
+                usage={"prompt_tokens": 0, "completion_tokens": 0},
+            )
 
     async def chat_stream(self, messages, tools=None, max_tokens=4096):
         try:
@@ -379,8 +388,13 @@ class FallbackProvider:
             logger.warning("Primary %s stream timeout — falling back", self._primary.config.name)
         except Exception:
             logger.warning("Primary %s stream unexpected error — falling back", self._primary.config.name, exc_info=True)
-        async for event in self._fallback.chat_stream(messages, tools, max_tokens):
-            yield event
+        try:
+            async for event in self._fallback.chat_stream(messages, tools, max_tokens):
+                yield event
+        except Exception as e:
+            logger.error("Both primary and fallback stream failed: %s", e)
+            yield {"type": "content", "text": f"⚠️ Both providers failed. {e}"}
+            yield {"type": "done", "tool_calls": [], "usage": {"prompt_tokens": 0, "completion_tokens": 0}}
 
 
 def resolve_provider(

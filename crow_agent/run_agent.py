@@ -159,7 +159,7 @@ _DANGEROUS_PATTERNS: list[tuple[str, str, str]] = [
     ("rm -rf $HOME", "targets user home directory", "rm -rf ./build/cache"),
 ]
 
-_LOOP_HARD_CEILING = 24  # ponytail: bumped from 12 for heavy tasks (120K budget)
+_LOOP_HARD_CEILING = 999  # effectively no ceiling — DeepSeek V4 Flash is $0.14/1M input tokens
 
 # Parallel execution nudge — injected at round 2 if no parallel tools used yet
 _LOOP_PARALLEL_PROMPT = (
@@ -1002,49 +1002,36 @@ class AIAgent:
         # Single-agent handles everything else faster (no decomposition overhead).
         import re as _re
 
-        # Hard skip: questions, simple commands, single-topic requests
-        _skip_patterns = [
-            "how", "what", "why", "when", "where", "who",
-            "explain", "tell me", "show me", "update me",
-            "check", "look at", "find", "search for",
-        ]
-        if any(lowered.startswith(p) or f" {p} " in lowered for p in _skip_patterns):
-            return None
-
-        # Need MULTIPLE independent work areas to justify crew
-        _file_mentions = len(_re.findall(r'[\w/-]+\.(py|md|json|yaml|toml|html|css|js)', user_input))
-
-        # Parallel indicators: multiple files + multiple actions, or explicit comparison
-        _parallel_signals = [
-            "compare", "versus", "vs", "both",
-            "at the same time", "in parallel",
-            "research.*and.*implement", "review.*and.*fix",
-        ]
-        _has_parallel = any(
-            _re.search(p, lowered) for p in _parallel_signals
+        # Soft skip: simple questions don't need crew
+        # Note: "check", "find", "what" in context of building still trigger crew
+        _simple_question = (
+            len(stripped) < 30
+            or any(lowered.startswith(p) for p in ("hi", "hello", "thanks", "ok", "yes", "no"))
         )
-
-        # Crew needs: (multiple files OR parallel signals) AND task keywords
-        task_keywords = ["build", "create", "research", "analyze", "compare",
-                        "review", "refactor", "implement", "design", "write",
-                        "fix", "debug", "optimize", "test", "deploy",
-                        "summarize", "explain in detail", "deep dive"]
-        _has_task_kw = any(kw in lowered for kw in task_keywords)
-
-        if not _has_task_kw:
+        if _simple_question:
             return None
 
-        # Multi-file tasks with 3+ files → crew
-        if _file_mentions >= 3:
-            pass  # crew justified
-        # Explicit parallel signals → crew
-        elif _has_parallel:
-            pass  # crew justified
-        # Long complex request (100+ chars with multiple verbs) → crew
-        elif len(stripped) > 100 and sum(1 for kw in task_keywords if kw in lowered) >= 2:
-            pass  # probably multi-step
+        # Crew needed if task involves building/creating/writing multiple components
+        # Keywords in English and Malay
+        _build_kw = [
+            "build", "create", "make", "write", "implement", "develop",
+            "refactor", "fix", "debug", "add", "setup", "configure",
+            "buat", "tambah", "bina", "ubah", "betulkan",
+        ]
+        _is_build_task = any(kw in lowered for kw in _build_kw)
+
+        # Check for file/table/service mentions (multiple components = parallelizable)
+        _file_mentions = len(_re.findall(
+            r'[\w/-]+\.(py|md|json|yaml|toml|html|css|js)|'
+            r'\b(table|service|tool|function|class|module|extension)\b',
+            user_input, flags=_re.IGNORECASE
+        ))
+
+        # Fire crew if: build task AND 2+ components OR explicit "extension" mention
+        if _is_build_task and (_file_mentions >= 2 or "extension" in lowered):
+            logger.info("Crew triggered: build task with %d component(s)", _file_mentions)
         else:
-            return None  # single-agent can handle this
+            return None
 
         logger.info("Crew activated for: %s", user_input[:80])
 

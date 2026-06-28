@@ -266,8 +266,24 @@ def get_worker_provider(
             )
         except Exception:
             logger.warning(
-                "Worker primary '%s' for profile '%s' failed, trying pool",
+                "Worker primary '%s' for profile '%s' failed, trying fallback",
                 primary_ref, profile_name,
+            )
+
+    # Per-profile fallback
+    fallback_ref = _DEFAULT_PROFILE_FALLBACKS.get(profile_name)
+    if fallback_ref:
+        fb_provider, fb_model = (fallback_ref.split("/", 1) if "/" in fallback_ref else (fallback_ref, None))
+        try:
+            return resolve_provider(
+                fb_provider,
+                model=fb_model,
+                provider_manager=provider_manager,
+            )
+        except Exception:
+            logger.warning(
+                "Worker fallback '%s' for profile '%s' failed, trying pool",
+                fallback_ref, profile_name,
             )
 
     # Pool fallback: try any available provider
@@ -284,16 +300,19 @@ def get_worker_provider(
 
 # Default profile → provider mapping (overridable)
 _DEFAULT_PROFILE_PRIMARIES: dict[str, str] = {
-    "architect": "openrouter/openai/gpt-oss-120b:free",
-    "code-reviewer": "openrouter/openai/gpt-oss-120b:free",
-    "debugger": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+    "architect": "opencode-zen-1/nemotron-3-ultra-free",
     "deep-worker": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
-    "planner": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
-    "project-manager": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
-    "researcher": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
-    "test-writer": "openrouter/openai/gpt-oss-120b:free",
-    "verifier": "openrouter/openai/gpt-oss-120b:free",
+    "code-worker": "opencode-zen-2/big-pickle",
+    "verifier": "opencode-zen-3/mimo-v2.5-free",
     "web-reader": "openrouter/google/gemma-4-31b-it:free",
+}
+
+# Per-profile fallback (tried before falling through to pool)
+_DEFAULT_PROFILE_FALLBACKS: dict[str, str] = {
+    "architect": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+    "deep-worker": "opencode-zen-1/nemotron-3-ultra-free",
+    "code-worker": "opencode-zen/deepseek-v4-flash-free",
+    "verifier": "opencode-zen-4/north-mini-code-free",
 }
 
 
