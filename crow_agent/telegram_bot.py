@@ -20,7 +20,7 @@ from telegram.helpers import escape
 
 from crow_agent.crow_state import CrowState
 from crow_agent.paths import PROJECT_ROOT
-from crow_agent.run_agent import AIAgent, Trigger, TriggerSource, _LOOP_HARD_CEILING
+from crow_agent.run_agent import AIAgent, Trigger, TriggerSource
 from crow_agent.telegram_rich import (
     format_telegram_html,
     _safe_html_chunks,
@@ -292,10 +292,9 @@ class TelegramBot:
                 _tools_used: list[str] = []
 
                 async with asyncio.timeout(600):
-                    cont_turns = 0
-                    while cont_turns <= _LOOP_HARD_CEILING:
-                        trigger = Trigger(source=TriggerSource.USER, prompt=text, chat_id=chat_id)
-                        async for event in agent.run_stream(trigger):
+                    # v3: single-shot — no [CONTINUE] loop, no task state management
+                    trigger = Trigger(source=TriggerSource.USER, prompt=text, chat_id=chat_id)
+                    async for event in agent.run_stream(trigger):
                             if isinstance(event, dict):
                                 ev_type = event.get("type", "")
                                 if ev_type == "tool" and event.get("status") == "start":
@@ -314,22 +313,6 @@ class TelegramBot:
 
                                 elif event.get("done"):
                                     pass
-
-                        if "[CONTINUE]" in final_text:
-                            final_text = final_text.replace("[CONTINUE]", "").strip()
-                            if not final_text:
-                                final_text = "..."  # force retry
-                            cont_turns += 1
-                            text = "[CONTINUE task] Continue. Signal [DONE] when complete."
-                            await self._send_telegram_text(chat_id, final_text, reply_to_message_id=update.message.message_id)
-                            final_text = ""
-                            continue
-                        elif "[DONE]" in final_text:
-                            final_text = final_text.replace("[DONE]", "").strip()
-                            # ponytail: [DONE]-only means task done, don't loop
-                            break
-                        else:
-                            break
 
                 # Delete status messages
                 try:

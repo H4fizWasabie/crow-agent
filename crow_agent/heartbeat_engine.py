@@ -794,6 +794,19 @@ class HeartbeatEngine:
             last_output = ""
             last_tools = []
 
+        # Load retry_count and round from checkpoint JSON
+        import json, pathlib
+        _cp_path = pathlib.Path.home() / ".crow_agent" / "active_tasks" / f"{sid}.json"
+        retry_count = 0
+        round_num = turn_count
+        if _cp_path.exists():
+            try:
+                _cp_data = json.loads(_cp_path.read_text())
+                retry_count = _cp_data.get("retry_count", 0)
+                round_num = _cp_data.get("round", turn_count)
+            except (json.JSONDecodeError, OSError):
+                pass
+
         try:
             _agent_provider = self._provider
             _loop = asyncio.get_running_loop()
@@ -866,33 +879,30 @@ class HeartbeatEngine:
                 final_output = "".join(output_parts)
 
             # Detect fake completions: text-only "acknowledged" without real action
-            tool_count = len(tool_calls)
-            is_fake_completion = (
-                tool_count == 0
-                and any(w in final_output.lower() for w in ("acknowledged", "switching", "done", "complete"))
-                and not ("[DONE]" in final_output)
-            )
-            is_done = "[DONE]" in final_output
-            if is_done and is_fake_completion:
-                # Text-only ack without tools — force continue
-                logger.warning("Initiative #%s text-only ack without tools — forcing continue", iid)
-                self._active_initiatives[iid]["last_output"] = final_output
-                self._active_initiatives[iid]["last_tools"] = tool_calls
-                self._active_initiatives[iid]["status"] = "waiting"
-                self._active_initiatives[iid]["outcome"] = "retry"
-                await self._spawn_initiative(goal, initiative_id=iid)
-                return
-            if is_done:
-                logger.info("Initiative #%s completed (turn %d)", iid, turn_count)
-                self._active_initiatives[iid]["outcome"] = "completed"
-                self._active_initiatives.pop(iid, None)
+            had_tools = len(tool_calls) > 0
+            had_content = bool(final_output.strip()) and "Read-lock engaged" not in final_output
+            is_error = "Both providers failed" in final_output or "\u26a0" in final_output
+
+            # Save checkpoint with status
+            cp_status = "waiting" if (had_tools or is_error) else "done"
+            _save_checkpoint(sid, goal, round_num, tool_calls, final_output)
+            # Update status + retry_count in checkpoint
+            import json, pathlib
+            cp_path = pathlib.Path.home() / ".crow_agent" / "active_tasks" / f"{sid}.json"
+            if cp_path.exists():
+                cp_data = json.loads(cp_path.read_text())
+                cp_data["status"] = cp_status
+                cp_data["retry_count"] = retry_count + (1 if is_error else 0)
+                cp_path.write_text(json.dumps(cp_data, indent=2, ensure_ascii=False))
+
+            if cp_status == "done":
+                logger.info("Initiative #%s completed (round %d)", iid, round_num)
+                pathlib.Path.unlink(cp_path, missing_ok=True)
                 await self._advance_agenda()
+            elif is_error:
+                logger.warning("Initiative #%s error (retry %d) — will retry", iid, retry_count + 1)
             else:
-                self._active_initiatives[iid]["last_output"] = final_output
-                self._active_initiatives[iid]["last_tools"] = tool_calls
-                logger.info("Initiative #%s turn %d continuing immediately", iid, turn_count)
-                await self._spawn_initiative(goal, initiative_id=iid)
-                return
+                logger.info("Initiative #%s turn %d continuing", iid, round_num)
 
             # Build tool summary
             _tool_icons_map = {
@@ -932,15 +942,15 @@ class HeartbeatEngine:
             logger.info("Initiative #%s turn %d finished: %s", iid, turn_count, goal[:80])
 
         except Exception as e:
-            logger.error("Initiative #%s failed: %s", iid, e)
-            self._active_initiatives.pop(iid, None)
-            try:
-                self._db.append_turn(
-                    self._autonomous_sid, "assistant",
-                    f"[Initiative #{iid} FAILED] {goal}\nError: {e}"
-                )
-            except Exception:
-                pass
+            logger.error("Initiative #%s crashed: %s", iid, e)
+            _save_checkpoint(sid, goal, 0, [], f"Crashed: {e}")
+            import json, pathlib as _pl
+            _fp = _pl.Path.home() / ".crow_agent" / "active_tasks" / f"{sid}.json"
+            if _fp.exists():
+                _cd = json.loads(_fp.read_text())
+                _cd["status"] = "waiting"
+                _cd["retry_count"] = retry_count + 1
+                _fp.write_text(json.dumps(_cd, indent=2))
 
 
     async def _advance_agenda(self) -> None:
