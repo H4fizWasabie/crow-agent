@@ -299,12 +299,22 @@ def get_worker_provider(
 
 
 # Default profile → provider mapping (overridable)
+# Default profile → provider mapping (overridable)
+# Includes aliases for backward compatibility with old profile names
 _DEFAULT_PROFILE_PRIMARIES: dict[str, str] = {
+    # New 5-profile system
     "architect": "opencode-zen-1/nemotron-3-ultra-free",
     "deep-worker": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
     "code-worker": "opencode-zen-2/big-pickle",
     "verifier": "opencode-zen-3/mimo-v2.5-free",
     "web-reader": "openrouter/google/gemma-4-31b-it:free",
+    # Old name aliases
+    "researcher": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+    "code-reviewer": "opencode-zen-2/big-pickle",
+    "debugger": "opencode-zen-3/mimo-v2.5-free",
+    "planner": "opencode-zen-1/nemotron-3-ultra-free",
+    "project-manager": "opencode-zen/deepseek-v4-flash-free",
+    "test-writer": "opencode-zen-4/north-mini-code-free",
 }
 
 # Per-profile fallback (tried before falling through to pool)
