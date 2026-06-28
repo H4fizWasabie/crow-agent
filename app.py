@@ -103,6 +103,10 @@ _heartbeat: Any | None = None  # HeartbeatEngine, initialized in lifespan
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage cron + Telegram bot lifecycle."""
+    # Check for updates on startup (non-blocking, cached every 6h)
+    from crow_agent.update_checker import check_for_updates
+    check_for_updates()
+
     # Seed provider config from .env on first run
     try:
         _pm.seed_from_env()
