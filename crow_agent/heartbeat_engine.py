@@ -734,17 +734,33 @@ class HeartbeatEngine:
                 await self._notify(delta)
 
 
-    async def _spawn_initiative(self, goal: str, initiative_id: str | None = None) -> None:
+    async def _spawn_initiative(self, goal: str, initiative_id: str | None = None, profile_name: str | None = None) -> None:
         """Spawn an Initiative agent turn to act on a heartbeat detection.
 
-        Creates a new AIAgent with initiative_UUID session, feeds it the
-        heartbeat's goal as a trigger, and runs a full agent turn.
-        Result is stored in the autonomous session.
-
-        Rate limited: max 2 per hour, pauses after 3 consecutive without user input.
-        """
+        Creates a new AIAgent, runs one turn, classifies output, updates
+        checkpoint status. If profile_name is given or detected from goal,
+        uses the team profile for specialized roles."""
         import uuid, time as _time
-        from .run_agent import AIAgent, Trigger, TriggerSource
+        from .run_agent import AIAgent, Trigger, TriggerSource, _save_checkpoint, _load_checkpoint
+        from .agent_profiles import load_profile, run_child_task
+
+        # Auto-detect profile from goal if not specified
+        if not profile_name:
+            _lower = goal.lower()
+            if "test" in _lower and ("fail" in _lower or "fix" in _lower):
+                profile_name = "test-writer"
+            elif "code" in _lower and ("review" in _lower or "check" in _lower):
+                profile_name = "code-reviewer"
+            elif "bug" in _lower or "error" in _lower or "crash" in _lower or "fail" in _lower:
+                profile_name = "debugger"
+            elif "architect" in _lower or "design" in _lower or "decision" in _lower:
+                profile_name = "architect"
+            elif "research" in _lower or "investigate" in _lower or "find" in _lower:
+                profile_name = "researcher"
+            elif "implement" in _lower or "build" in _lower or "create" in _lower:
+                profile_name = "deep-worker"
+            elif "verify" in _lower or "check" in _lower or "validate" in _lower:
+                profile_name = "verifier"
 
         now = _time.time()
         is_continuation = initiative_id is not None and initiative_id in self._active_initiatives
@@ -788,83 +804,74 @@ class HeartbeatEngine:
 
         try:
             _agent_provider = self._provider
+            _loop = asyncio.get_running_loop()
 
-            agent = AIAgent(
-                session_id=sid,
-                provider=_agent_provider,
-                identity=(
-                    "Autonomous action agent. "
-                    f"Current task: {goal}\n\n"
-                    "Act on this task using your full tool set. "
-                    "When done, append [DONE] to your final response. "
-                    "If work continues next turn, append [CONTINUE]."
-                ),
-            )
-
+            # Build context lines for identity
+            context_lines = [f"Current task: {goal}"]
             if is_continuation and turn_count > 1:
-                # Build data-only continuation context: tools + brief results, no narration
-                tool_ctx = ""
-                if last_tools:
-                    tool_ctx = f"Previous tools: {', '.join(last_tools[:15])}\n"
-                # Only tail of last output — narration is front-loaded, results come later
-                result_snip = last_output.strip()[-500:] if last_output.strip() else "(none)"
+                context_lines.append(f"Turn {turn_count} — continuing")
 
-                # Loop-awareness: detect if same tools keep failing
-                prev_fp = state.get("tools_fingerprint", "")
-                curr_fp = ",".join(sorted(set(last_tools[:15]))) if last_tools else ""
-                stuck_count = state.get("stuck_count", 0)
-                if curr_fp and curr_fp == prev_fp:
-                    stuck_count += 1
-                else:
-                    stuck_count = 0
-                state["stuck_count"] = stuck_count
-                state["tools_fingerprint"] = curr_fp
-
-                stuck_nudge = ""
-                if stuck_count >= 2:
-                    stuck_nudge = (
-                        f"\n⚠️ Same tools failed {stuck_count + 1} times. "
-                        f"Previous approach not working. Try a completely different strategy "
-                        f"or report the obstacle to the user.\n"
+            # Use profile agent if one was matched, otherwise fall back to raw AIAgent
+            profile = load_profile(profile_name) if profile_name else None
+            if profile:
+                logger.info("Initiative using profile: %s (for: %s)", profile_name, goal[:60])
+                _task = goal
+                if is_continuation and turn_count > 1 and last_output:
+                    _task = (
+                        f"[CONTINUING TASK — turn {turn_count}]\n"
+                        f"Goal: {goal}\n\n"
+                        f"Last result: {last_output.strip()[-500:]}\n\n"
+                        f"Continue working."
                     )
-
-                trigger_prompt = (
-                    f"[CONTINUING TASK — turn {turn_count}]\n"
-                    f"Goal: {goal}\n\n"
-                    f"{tool_ctx}"
-                    f"{stuck_nudge}"
-                    f"Last results snippet: {result_snip}\n\n"
-                    f"Continue working. Call the next tool. "
-                    f"Signal [DONE] when complete, [CONTINUE] if more work needed."
+                from .toolsets import ToolRegistry as _TR
+                _tools = _TR()
+                from .tool_executor import _TOOL_FUNCTIONS
+                for _n, _fn in _TOOL_FUNCTIONS.items():
+                    _tools.register(_fn)
+                _result = await _loop.run_in_executor(
+                    None, run_child_task,
+                    profile, _task, _agent_provider, _tools,
                 )
+                final_output = _result
+                tool_calls = []
             else:
-                trigger_prompt = (
-                    f"{goal}\n\n"
-                    f"[When done, append [DONE] to your final response. "
-                    f"If work continues next turn, append [CONTINUE].]"
+                agent = AIAgent(
+                    session_id=sid,
+                    provider=_agent_provider,
+                    identity=(
+                        "Autonomous action agent. "
+                        f"Current task: {goal}\n\n"
+                        "Act on this task using your full tool set. "
+                        "When done, append [DONE] to your final response. "
+                        "If work continues next turn, append [CONTINUE]."
+                    ),
                 )
-
-            trigger = Trigger(
-                source=TriggerSource.HEARTBEAT,
-                prompt=trigger_prompt,
-                initiative_id=iid,
-            )
-
-            # Run the turn and capture output + tool calls
-            output_parts = []
-            tool_calls: list[str] = []
-            async for event in agent.run_stream(trigger):
-                if isinstance(event, dict):
-                    if event.get("type") == "final":
-                        output_parts.append(event.get("text", ""))
-                    elif event.get("type") == "tool" and event.get("status") == "start":
-                        tool_calls.append(event.get("name", "?"))
-                    elif event.get("type") == "tool" and event.get("status") == "error":
-                        tool_calls.append(f"{event.get('name', '?')} ❌")
-                elif isinstance(event, str):
-                    output_parts.append(event)
-
-            final_output = "".join(output_parts)
+                trigger_prompt = goal
+                if is_continuation and turn_count > 1 and last_output:
+                    trigger_prompt = (
+                        f"[CONTINUING TASK — turn {turn_count}]\n"
+                        f"Goal: {goal}\n\n"
+                        f"Last result: {last_output.strip()[-500:]}\n\n"
+                        f"Continue working."
+                    )
+                trigger = Trigger(
+                    source=TriggerSource.HEARTBEAT,
+                    prompt=trigger_prompt,
+                    initiative_id=iid,
+                )
+                output_parts = []
+                tool_calls: list[str] = []
+                async for event in agent.run_stream(trigger):
+                    if isinstance(event, dict):
+                        if event.get("type") == "final":
+                            output_parts.append(event.get("text", ""))
+                        elif event.get("type") == "tool" and event.get("status") == "start":
+                            tool_calls.append(event.get("name", "?"))
+                        elif event.get("type") == "tool" and event.get("status") == "error":
+                            tool_calls.append(f"{event.get('name', '?')} ❌")
+                    elif isinstance(event, str):
+                        output_parts.append(event)
+                final_output = "".join(output_parts)
 
             # Detect fake completions: text-only "acknowledged" without real action
             tool_count = len(tool_calls)
