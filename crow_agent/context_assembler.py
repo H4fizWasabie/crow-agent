@@ -92,8 +92,10 @@ def assemble_context(
                     _tick_lines.append(f"- {_c}")
                 _awareness = "## Situational Awareness (recent heartbeat ticks)\n" + "\n".join(_tick_lines)
                 context_injections.append(_awareness)
-        except Exception:
-            pass  # ponytail: best-effort, never block autonomous turn
+        except Exception as e:
+            logger.warning("Heartbeat awareness failed: %s — using raw ticks", e)
+            if _tick_lines:
+                context_injections.append("## Situational Awareness (raw)\n" + "\n".join(_tick_lines[:5]))
 
     # ── ASSEMBLE ──
     # Reload memory (re-read context files so mid-session learnings visible)
@@ -308,7 +310,11 @@ def _summarize_turns(
         summary = resp.content.strip()
         if summary:
             return f"Summary of earlier turns:\n{summary}"
-    except Exception:
-        pass
-
-    return ""
+    except Exception as e:
+        logger.warning("Context summarization failed: %s — using raw truncation", e)
+        lines = []
+        for i, turn in enumerate(trimmed_history[:5]):
+            txt = str(turn.get("content", ""))[:200]
+            if txt.strip():
+                lines.append(txt)
+        return "\n".join(lines) if lines else ""

@@ -169,7 +169,7 @@ def register_default_sources(
     def _build_budget_notice(user_input: str, db: Any) -> str | None:
         return (
             "\n\n📋 Tool Budget: 12 rounds per turn, parallel batching suggested at round 2. "
-            "If more work remains, say [CONTINUE] to resume on next heartbeat. "
+            "If more work remains, you'll get another turn automatically. "
             "See Think in Code directive for tool efficiency guidance."
         )
     sources.append(ContextSource("Budget Notice", TIER_LOW, _build_budget_notice))

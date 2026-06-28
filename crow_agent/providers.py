@@ -28,6 +28,14 @@ class ChatMessage:
     tool_calls: list[dict[str, Any]] | None = None
     reasoning_content: str | None = None
 
+    def get(self, key: str, default: Any = None) -> Any:
+        """Support dict-style .get() for backwards compatibility."""
+        return getattr(self, key, default)
+
+
+class ProviderError(Exception):
+    """Retryable provider error — failover should try fallback."""
+
 
 @dataclass
 class ChatResponse:
@@ -80,7 +88,12 @@ class BaseProvider(ABC):
         resp.raise_for_status()
         parsed = resp.json()
         if "choices" not in parsed:
-            logger.warning("API response missing 'choices' — body=%s", resp.text[:500])
+            # OpenRouter sometimes returns error in 200 response
+            error_msg = parsed.get("error", {}).get("message", "empty body")
+            msg_chars = sum(len(m.get("content", "") or "") for m in messages) if messages else 0
+            logger.warning("%s: 200 with no choices — error=%s, context=%d chars",
+                          self.config.name, error_msg[:100], msg_chars)
+            raise ProviderError(f"{self.config.name}: empty/malformed response ({error_msg[:100]})")
         return self._parse(parsed)
 
     async def chat_stream(
@@ -195,12 +208,22 @@ class OpenAICompatibleProvider(BaseProvider):
         msgs: list[dict[str, Any]] = []
         for m in messages:
             entry: dict[str, Any] = {"role": m.role, "content": m.content}
-            if m.tool_call_id is not None:
+            if m.role == "tool":
+                # DeepSeek requires tool_call_id + preceding assistant with tool_calls
+                entry["tool_call_id"] = m.tool_call_id or "call_db_legacy"
+                if msgs and msgs[-1].get("role") == "assistant" and not msgs[-1].get("tool_calls"):
+                    msgs[-1]["tool_calls"] = [{
+                        "id": entry["tool_call_id"],
+                        "type": "function",
+                        "function": {"name": "_legacy", "arguments": "{}"},
+                    }]
+            elif m.tool_call_id is not None:
                 entry["tool_call_id"] = m.tool_call_id
             if m.tool_calls is not None:
                 entry["tool_calls"] = m.tool_calls
-            if m.reasoning_content is not None:
-                entry["reasoning_content"] = m.reasoning_content
+            # Don't send reasoning_content back — opencode fails on follow-ups
+            # if m.reasoning_content is not None:
+            #     entry["reasoning_content"] = m.reasoning_content
             msgs.append(entry)
 
         p: dict[str, Any] = {
@@ -354,6 +377,8 @@ class FallbackProvider:
             return self._primary.chat(messages, tools, max_tokens)
         except PermanentProviderError:
             raise
+        except ProviderError:
+            logger.warning("Primary %s provider error — falling back", self._primary.config.name)
         except httpx.HTTPStatusError as e:
             if e.response.status_code in (401, 403, 400):
                 raise
@@ -380,6 +405,8 @@ class FallbackProvider:
             return
         except PermanentProviderError:
             raise
+        except ProviderError:
+            logger.warning("Primary %s stream provider error — falling back", self._primary.config.name)
         except httpx.HTTPStatusError as e:
             if e.response.status_code in (401, 403, 400):
                 raise

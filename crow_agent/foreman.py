@@ -102,8 +102,11 @@ class Foreman:
                 vec = embed([summary])
                 if vec is not None:
                     self._last_vectors[task_id] = (summary, vec[0])
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Foreman embedding failed: %s — using keyword detection", e)
+                keywords = ["error", "fail", "stuck", "timeout", "blocked"]
+                if any(kw in summary.lower() for kw in keywords):
+                    self._enqueue({"type": "keyword_alert", "task_id": task_id, "summary": summary[:200]})
 
     def _enqueue(self, update: dict[str, Any]) -> None:
         with self._lock:

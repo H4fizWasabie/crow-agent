@@ -563,8 +563,8 @@ def _inject_worker_summary(worker: str, step_id: str, result: str) -> None:
         db.append_turn("default", "assistant",
                        f"[Worker {worker}] Step '{step_id}': {summary}")
         db.close()
-    except Exception:
-        pass  # ponytail: best-effort, never break crew execution
+    except Exception as e:
+        logger.warning("Worker DB persist failed: %s — result preserved", e)  # ponytail: best-effort, never break crew execution
 
 
 def merge_results(

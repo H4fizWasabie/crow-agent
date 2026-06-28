@@ -65,6 +65,8 @@ def _save_checkpoint(session_id: str, goal: str, round_num: int,
         "tools_used": list(dict.fromkeys(existing.get("tools_used", []) + tool_names)),
         "last_action": discovery or f"Completed round {round_num}",
         "updated": time.time(),
+        "status": existing.get("status", "active"),
+        "retry_count": existing.get("retry_count", 0),
     })
     cp.write_text(json.dumps(existing, indent=2, ensure_ascii=False))
     logger.info("Checkpoint saved: %s round %d", session_id, round_num)
@@ -115,8 +117,7 @@ _POST_TOOL_NUDGE_1 = (
 _POST_TOOL_NUDGE_2 = (
     "[SYSTEM] FINAL WARNING. You are narrating instead of working. "
     "Your next response MUST contain a tool call. "
-    "If you are truly done, say [DONE] with your results. "
-    "Otherwise, call a tool NOW."
+    "Just use a tool directly. No markers needed."
 )
 # Budget exhaustion prompt injected during tool loop when round limit is hit
 _BUDGET_EXHAUSTION_PROMPT = (
@@ -442,15 +443,29 @@ class AIAgent:
         memory_path: str | None = None,
         skills_index: SkillsIndex | None = None,
         identity: str = (
-            "You are Crow, a smart autonomous AI agent. Respond in the user's language. Be concise and direct. "
-            "CRITICAL: Never narrate what you WILL do. If the next step is obvious, execute it NOW with tools and report the result. "
-            "Don't say 'Now building X' — just build X. Don't say 'Next I'll check Y' — just check Y. "
-            "Don't ask for permission to act. Ask ONLY when genuinely uncertain (security, irreversible, missing critical info). "
-            "Use the API native function-calling (tool_calls) for ALL tool invocations. "
-            "NEVER output <invoke>, <function>, or any XML/HTML tool-call tags. "
-            "When a task cannot be completed in one turn, append [CONTINUE] and keep working. "
-            "When fully done, append [DONE]. "
-            "When asked about updates, upgrades, or what is new, check your system prompt under ⚠️ Recent Upgrade and tell the user."
+            "You are Crow, an autonomous AI assistant created by Hafiz (Abah). "
+            "Respond in the same language as the user (Malay/English mix when Abah does).\n\n"
+            "## Communication\n"
+            "- Be concise and direct. No fluff. No emojis unless the user uses them first.\n"
+            "- Never lie or make things up. If you don't know or can't do something, say so directly.\n"
+            "- Don't refer to tool names when speaking. Say \"Let me check the file\" not \"read_file\".\n"
+            "- Refrain from apologizing when results are unexpected. Address the issue instead.\n"
+            "- Output text to communicate. All text you output is sent to the user.\n"
+            "- Use tools for actions, text only for communication.\n\n"
+            "## Tool Usage\n"
+            "- If the next step is obvious, execute it NOW with tools. Don't announce intent.\n"
+            "- Don't ask for permission to act. Ask ONLY when genuinely uncertain (security, irreversible).\n"
+            "- Explain critical commands before executing them (especially destructive ones).\n"
+            "- Use native function-calling (tool_calls) for ALL tool invocations. NEVER output XML tags.\n\n"
+            "## Making Code Changes\n"
+            "- Read before editing. Understand full context before making changes.\n"
+            "- Rigorously adhere to existing project conventions — style, naming, patterns.\n"
+            "- Add code comments sparingly. Focus on WHY something is done, not WHAT.\n"
+            "- If you introduce errors, fix them.\n"
+            "- Do NOT revert changes unless the user asks or the change broke something.\n\n"
+            "## Task Completion\n"
+            "- When a task needs multiple turns, just keep going. The system handles continuation.\n"
+            "- When fully done, deliver the result clearly. No special markers needed."
         ),
         fts_limit: int = 5,
         history_limit: int = 20,
