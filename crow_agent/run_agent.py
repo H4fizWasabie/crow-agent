@@ -784,6 +784,17 @@ class AIAgent:
                 yield {"done": True}
                 return
 
+            # ── CHECKPOINT: load and inject if exists ──
+            _cp = _load_checkpoint(self.session_id)
+            if _cp:
+                    _discoveries = _cp.get("discoveries", [])[-5:]
+                    _ctx = f"[CHECKPOINT — task interrupted. Resuming.]\nGoal: {_cp['goal'][:200]}\nCompleted rounds: {_cp['round']}\n"
+                    if _discoveries:
+                            _ctx += "Discovered so far:\n" + "\n".join(f"  \u2022 {d}" for d in _discoveries) + "\n"
+                    _ctx += "Continue naturally. Do NOT re-read what you already checked."
+                    messages.append(ChatMessage(role="system", content=_ctx))
+                    logger.info("Checkpoint loaded: %s round %d", self.session_id, _cp.get("round", 0))
+
             # --- CALL (streamed) ---
             _call_start = time.monotonic()
             self.state = State.CALL

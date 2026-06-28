@@ -286,50 +286,42 @@ class HeartbeatEngine:
     # ── slice handlers ────────────────────────────────────────────
 
     async def _slice_continue_initiatives(self) -> None:
+        """Rescue waiting/stuck tasks from active_tasks/ folder (Option C).
+
+        Scans .crow_agent/active_tasks/*.json for tasks with status=waiting
+        or retry_count under threshold. Spawns a continuation turn.
+        """
         if not self._provider or not self._can_act():
             return
-        import time as _t
-        now = _t.time()
-        # Rescue waiting initiatives
-        waiting = [(iid, s) for iid, s in self._active_initiatives.items() if s.get('status') == 'waiting']
-        # Also rescue stuck active >120s with 0 turns
-        stuck = [(iid, s) for iid, s in self._active_initiatives.items()
-                 if s.get('status') == 'active'
-                 and s.get('turn_count', 0) <= 1
-                 and s.get('_started_at', 0) > 0
-                 and now - s.get('_started_at', 0) > 120]
-        # Also rescue failed/retry outcomes
-        failed = [(iid, s) for iid, s in self._active_initiatives.items() if s.get('outcome') in ('failed', 'retry')]
-        rescue = (waiting + stuck + failed)[:1]
-        for iid, state in rescue:
-            state['status'] = 'active'
-            state['outcome'] = 'pending'
-            logger.info('Heartbeat rescuing initiative %s (was %s)', iid, state.get('outcome', state.get('status', '?')))
-            await self._spawn_initiative(state['goal'], initiative_id=iid)
-        # ponytail: fast-path for [CONTINUE] tasks (Hermes pattern)
-        # Check session_state.md at any age - not just stale (30min+).
-        # Backoff via spawn fingerprint: max 3 spawns per unchanged session state.
-        from pathlib import Path as _P; import time as _t2
-        sp=_P.home()/'.crow_agent'/'session_state.md'
-        if sp.exists():
-            age=_t2.time()-sp.stat().st_mtime
-            if age > 2:  # avoid race with file write
-                c=sp.read_text()[:800]
-                fp = hash(c[:200])
-                spawn_count, last_spawn = self._session_state_spawns.get(fp, (0, 0))
-                if 'IN PROGRESS' in c or 'TASK INCOMPLETE' in c:
-                    if spawn_count < 3 and (_t2.time() - last_spawn) > 120:
-                        self._session_state_spawns[fp] = (spawn_count + 1, _t2.time())
-                        logger.info('Auto-resuming session (spawn %d/3)', spawn_count + 1)
-                        await self._spawn_initiative(f'Resume: {c.split(chr(10))[0][:200]}')
-                    else:
-                        pass  # ponytail: backoff - task needs human help
-                elif age > 1800:
-                    # Stale session without markers - still old, try resume
-                    if spawn_count < 1:
-                        self._session_state_spawns[fp] = (1, _t2.time())
-                        logger.info('Auto-resuming stale session')
-                        await self._spawn_initiative(f'Resume: {c.split(chr(10))[0][:200]}')
+        import json, time, pathlib
+        now = time.time()
+        tasks_dir = pathlib.Path.home() / ".crow_agent" / "active_tasks"
+        if not tasks_dir.exists():
+            return
+
+        rescued = 0
+        for cp_path in sorted(tasks_dir.glob("*.json"), key=lambda p: p.stat().st_mtime):
+            if rescued >= 1:  # one per tick
+                break
+            try:
+                cp = json.loads(cp_path.read_text())
+                if cp.get("status") in ("waiting",):
+                    goal = cp.get("goal", "Resume task")
+                    retry_count = cp.get("retry_count", 0)
+                    if retry_count >= 3:
+                        logger.warning("Initiative %s exhausted retries (3) — notifying user", cp.get("session_id", "?"))
+                        await self._notify(ContextDelta(
+                            short_summary=f"Task stuck: {goal[:100]}",
+                            summary=f"Crow tried 3 times but couldn't complete:\n\n{goal[:300]}",
+                        ))
+                        cp["status"] = "stuck"
+                        cp_path.write_text(json.dumps(cp, indent=2))
+                        continue
+                    logger.info("Heartbeat rescuing initiative %s (retry %d)", cp.get("session_id", "?"), retry_count)
+                    await self._spawn_initiative(goal, initiative_id=cp.get("session_id", "").replace("initiative_", ""))
+                    rescued += 1
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning("Skipping corrupted task file %s: %s", cp_path.name, e)
 
     async def _slice_code_check(self) -> None:
         """Slice 6: autonomous code check on git changes."""
