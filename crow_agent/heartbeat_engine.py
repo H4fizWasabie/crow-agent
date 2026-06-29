@@ -794,16 +794,18 @@ class HeartbeatEngine:
             last_output = ""
             last_tools = []
 
-        # Load retry_count and round from checkpoint JSON
+        # Load retry_count, round, and discoveries from checkpoint JSON
         import json, pathlib
         _cp_path = pathlib.Path.home() / ".crow_agent" / "active_tasks" / f"{sid}.json"
         retry_count = 0
         round_num = turn_count
+        discoveries = []
         if _cp_path.exists():
             try:
                 _cp_data = json.loads(_cp_path.read_text())
                 retry_count = _cp_data.get("retry_count", 0)
                 round_num = _cp_data.get("round", turn_count)
+                discoveries = _cp_data.get("discoveries", [])
             except (json.JSONDecodeError, OSError):
                 pass
 
@@ -821,12 +823,13 @@ class HeartbeatEngine:
             if profile:
                 logger.info("Initiative using profile: %s (for: %s)", profile_name, goal[:60])
                 _task = goal
-                if is_continuation and turn_count > 1 and last_output:
+                if is_continuation and discoveries:
                     _task = (
-                        f"[CONTINUING TASK — turn {turn_count}]\n"
+                        f"[TASK UPDATE — round {round_num}]\n"
                         f"Goal: {goal}\n\n"
-                        f"Last result: {last_output.strip()[-500:]}\n\n"
-                        f"Continue working."
+                        f"Progress:\n"
+                        + "\n".join(f"  \u2705 {d[:200]}" for d in discoveries[-3:]) + "\n\n"
+                        f"Continue with the next step."
                     )
                 from .toolsets import ToolRegistry as _TR
                 _tools = _TR()
@@ -852,12 +855,13 @@ class HeartbeatEngine:
                     ),
                 )
                 trigger_prompt = goal
-                if is_continuation and turn_count > 1 and last_output:
+                if is_continuation and discoveries:
                     trigger_prompt = (
-                        f"[CONTINUING TASK — turn {turn_count}]\n"
+                        f"[TASK UPDATE — round {round_num}]\n"
                         f"Goal: {goal}\n\n"
-                        f"Last result: {last_output.strip()[-500:]}\n\n"
-                        f"Continue working."
+                        f"Progress:\n"
+                        + "\n".join(f"  \u2705 {d[:200]}" for d in discoveries[-3:]) + "\n\n"
+                        f"Continue with the next step."
                     )
                 trigger = Trigger(
                     source=TriggerSource.HEARTBEAT,
