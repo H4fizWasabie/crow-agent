@@ -261,6 +261,12 @@ class CrowState:
         )
         self._maybe_commit()
 
+        # Clean up turns older than 90 days
+        self._conn.execute(
+            "DELETE FROM turns WHERE created_at < datetime('now', '-90 days')"
+        )
+        self._maybe_commit()
+
         # Run stamp-based migration (applies any pending _MIGRATIONS entries)
         _migrate(self._conn, self._lock)
 

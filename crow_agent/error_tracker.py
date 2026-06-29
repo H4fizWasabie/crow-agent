@@ -31,6 +31,7 @@ class ErrorTracker:
         err["last"] = now
         if context and (not err["contexts"] or err["contexts"][-1] != context):
             err["contexts"].append(context)
+            err["contexts"] = err["contexts"][-20:]  # keep last 20
 
         count = err["count"]
         result = {"count": count, "warn": count >= WARN_THRESHOLD,

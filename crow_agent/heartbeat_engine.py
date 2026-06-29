@@ -102,6 +102,7 @@ class HeartbeatEngine:
         send_fn: Callable[[str], None] | None = None,
         tool_registry: Any | None = None,
         provider: Any | None = None,
+        provider_manager: Any | None = None,
         project_root: str | Path | None = None,
         max_actions_per_hour: int = 3,  # ponytail: lowered from 6
         chat_id: int = 0,
@@ -114,6 +115,7 @@ class HeartbeatEngine:
         self._crow_log_fn = crow_log_fn
         self._tools = tool_registry
         self._provider = provider
+        self._provider_manager = provider_manager
         self._project_root = Path(project_root) if project_root else Path.cwd()
         self._max_actions_per_hour = max_actions_per_hour
         self._chat_id = chat_id
@@ -734,21 +736,21 @@ class HeartbeatEngine:
         uses the team profile for specialized roles."""
         import uuid, time as _time
         from .run_agent import AIAgent, Trigger, TriggerSource, _save_checkpoint, _load_checkpoint
-        from .agent_profiles import load_profile, run_child_task
+        from .agent_profiles import load_profile
 
         # Auto-detect profile from goal if not specified
         if not profile_name:
             _lower = goal.lower()
             if "test" in _lower and ("fail" in _lower or "fix" in _lower):
-                profile_name = "test-writer"
+                profile_name = "code-worker"
             elif "code" in _lower and ("review" in _lower or "check" in _lower):
-                profile_name = "code-reviewer"
+                profile_name = "verifier"
             elif "bug" in _lower or "error" in _lower or "crash" in _lower or "fail" in _lower:
-                profile_name = "debugger"
+                profile_name = "code-worker"
             elif "architect" in _lower or "design" in _lower or "decision" in _lower:
                 profile_name = "architect"
             elif "research" in _lower or "investigate" in _lower or "find" in _lower:
-                profile_name = "researcher"
+                profile_name = "web-reader"
             elif "implement" in _lower or "build" in _lower or "create" in _lower:
                 profile_name = "deep-worker"
             elif "verify" in _lower or "check" in _lower or "validate" in _lower:
@@ -794,24 +796,25 @@ class HeartbeatEngine:
             last_output = ""
             last_tools = []
 
-        # Load retry_count, round, and discoveries from checkpoint JSON
-        import json, pathlib
-        _cp_path = pathlib.Path.home() / ".crow_agent" / "active_tasks" / f"{sid}.json"
-        retry_count = 0
-        round_num = turn_count
-        discoveries = []
-        if _cp_path.exists():
-            try:
-                _cp_data = json.loads(_cp_path.read_text())
-                retry_count = _cp_data.get("retry_count", 0)
-                round_num = _cp_data.get("round", turn_count)
-                discoveries = _cp_data.get("discoveries", [])
-            except (json.JSONDecodeError, OSError):
-                pass
+        # Load checkpoint for continuation
+        cp = _load_checkpoint(sid) if is_continuation else None
+        round_num = (cp.get("round", 0) + 1) if cp else 1
+        discoveries = cp.get("discoveries", []) if cp else []
+        tools_used = cp.get("tools_used", []) if cp else []
+        retry_count = cp.get("retry_count", 0) if cp else 0
 
         try:
-            _agent_provider = self._provider
-            _loop = asyncio.get_running_loop()
+            # Resolve worker-specific provider when a profile is matched
+            if profile_name and self._provider_manager:
+                try:
+                    from .crew import get_worker_provider
+                    _agent_provider = get_worker_provider(profile_name, self._provider_manager)
+                    logger.info("Initiative resolved worker provider for '%s'", profile_name)
+                except Exception as exc:
+                    logger.warning("Failed to resolve worker provider for '%s', falling back: %s", profile_name, exc)
+                    _agent_provider = self._provider
+            else:
+                _agent_provider = self._provider
 
             # Build context lines for identity
             context_lines = [f"Current task: {goal}"]
@@ -822,21 +825,47 @@ class HeartbeatEngine:
             profile = load_profile(profile_name) if profile_name else None
             if profile:
                 logger.info("Initiative using profile: %s (for: %s)", profile_name, goal[:60])
-                _task = goal
+                identity_parts = [profile.instructions]
+                if context_lines:
+                    identity_parts.append("\n".join(context_lines))
+                identity = "\n\n".join(identity_parts)
+
+                trigger_prompt = goal
                 if is_continuation and discoveries:
-                    _task = (
+                    trigger_prompt = (
                         f"[TASK UPDATE — round {round_num}]\n"
                         f"Goal: {goal}\n\n"
                         f"Progress:\n"
                         + "\n".join(f"  \u2705 {d[:200]}" for d in discoveries[-3:]) + "\n\n"
                         f"Continue with the next step."
                     )
-                _result = await _loop.run_in_executor(
-                    None, run_child_task,
-                    profile, _task, _agent_provider, self._tools,
+
+                agent = AIAgent(
+                    session_id=sid,
+                    provider=_agent_provider,
+                    tool_registry=self._tools,
+                    identity=identity,
                 )
-                final_output = _result
-                tool_calls = []
+                trigger = Trigger(
+                    source=TriggerSource.HEARTBEAT,
+                    prompt=trigger_prompt,
+                    initiative_id=iid,
+                )
+
+                output_parts = []
+                tool_calls: list[str] = []
+                async for event in agent.run_stream(trigger):
+                    if isinstance(event, dict):
+                        if event.get("type") == "final":
+                            output_parts.append(event.get("text", ""))
+                        elif event.get("type") == "tool" and event.get("status") == "start":
+                            tool_calls.append(event.get("name", "?"))
+                        elif event.get("type") == "tool" and event.get("status") == "error":
+                            tool_calls.append(f"{event.get('name', '?')} \u2716")
+                    elif isinstance(event, str):
+                        output_parts.append(event)
+
+                final_output = "".join(output_parts)
             else:
                 agent = AIAgent(
                     session_id=sid,

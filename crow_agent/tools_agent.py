@@ -203,6 +203,8 @@ def register_tools(registry: Any, **kwargs: Any) -> None:
             results = db.search(query, limit=limit)
         except Exception as exc:
             return f"Search error: {exc}"
+        finally:
+            db.close()
         if not results:
             return f"No results for: {query}"
         lines = []

@@ -189,6 +189,7 @@ async def lifespan(app: FastAPI):
         send_fn=(lambda t: _telegram_bot.send_message(_tg_chat_id, t)) if _telegram_bot and _tg_chat_id else None,
         tool_registry=_tools,
         provider=_hb_provider,
+        provider_manager=_pm,
         project_root=Path(__file__).parent,
         chat_id=_tg_chat_id or 0,
         crow_log_fn=_crow_log_cb,

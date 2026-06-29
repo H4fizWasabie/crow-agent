@@ -46,8 +46,6 @@ def resolve_context_budget(provider: Any) -> int:
 
 import functools
 
-_encoding_cache: dict[str, Any] = {}  # model_name_or_encoding → encoding
-
 
 # Model → tiktoken encoding mapping.
 KNOWN_TOKENIZERS: dict[str, str] = {

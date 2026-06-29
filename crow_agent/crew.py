@@ -306,37 +306,35 @@ def get_worker_provider(
 
 
 # Default profile → provider mapping (overridable)
-# Default profile → provider mapping (overridable)
-# Includes aliases for backward compatibility with old profile names
+# Consolidated to 6 workers. Old names kept as backward-compat aliases.
 _DEFAULT_PROFILE_PRIMARIES: dict[str, str] = {
-    # New 5-profile system
-    "architect": "opencode-zen-1/nemotron-3-ultra-free",
-    "deep-worker": "opencode-zen-1/nemotron-3-ultra-free",
-    "code-worker": "opencode-zen-2/big-pickle",
-    "verifier": "opencode-zen-3/mimo-v2.5-free",
-    "web-reader": "openrouter/google/gemma-4-31b-it:free",
-    # Old name aliases
-    "researcher": "opencode-zen-1/nemotron-3-ultra-free",
-    "code-reviewer": "opencode-zen-2/big-pickle",
-    "debugger": "opencode-zen-3/mimo-v2.5-free",
-    "planner": "opencode-zen-1/nemotron-3-ultra-free",
+    "architect":     "opencode-zen/deepseek-v4-flash-free",
+    "deep-worker":   "opencode-zen/deepseek-v4-flash-free",
+    "code-worker":   "opencode-zen-2/big-pickle",
+    "verifier":      "opencode-zen-3/mimo-v2.5-free",
+    "web-reader":    "openrouter/google/gemma-4-31b-it:free",
+    # Backward-compat aliases (map to merged profiles)
+    "researcher":    "openrouter/google/gemma-4-31b-it:free",
+    "code-reviewer": "opencode-zen-3/mimo-v2.5-free",
+    "debugger":      "opencode-zen-2/big-pickle",
+    "planner":       "opencode-zen/deepseek-v4-flash-free",
     "project-manager": "opencode-zen/deepseek-v4-flash-free",
-    "test-writer": "opencode-zen-4/north-mini-code-free",
+    "test-writer":   "opencode-zen-2/big-pickle",
 }
 
 # Per-profile fallback (tried before falling through to pool)
 _DEFAULT_PROFILE_FALLBACKS: dict[str, str] = {
-    "architect": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
-    "deep-worker": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
-    "code-worker": "opencode-zen/deepseek-v4-flash-free",
-    "verifier": "opencode-zen-4/north-mini-code-free",
-    # Old name aliases
-    "researcher": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+    "architect":     "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+    "deep-worker":   "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+    "code-worker":   "opencode-zen/deepseek-v4-flash-free",
+    "verifier":      "opencode-zen/deepseek-v4-flash-free",
+    # Backward-compat aliases (map to merged profiles)
+    "researcher":    "opencode-zen/deepseek-v4-flash-free",
     "code-reviewer": "opencode-zen/deepseek-v4-flash-free",
-    "debugger": "opencode-zen-4/north-mini-code-free",
-    "planner": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
-    "project-manager": "opencode-zen-1/nemotron-3-ultra-free",
-    "test-writer": "opencode-zen/deepseek-v4-flash-free",
+    "debugger":      "opencode-zen/deepseek-v4-flash-free",
+    "planner":       "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+    "project-manager": "opencode-zen/deepseek-v4-flash-free",
+    "test-writer":   "opencode-zen/deepseek-v4-flash-free",
 }
 
 
@@ -468,13 +466,17 @@ async def execute_plan(
         # Append result to scratchpad with type tag
         _type_map = {
             "architect": "decision",
-            "code-reviewer": "review",
             "code-worker": "code",
-            "debugger": "investigation",
             "deep-worker": "implementation",
-            "researcher": "research",
             "verifier": "verification",
-            "test-writer": "test",
+            "web-reader": "read",
+            # Backward-compat aliases
+            "code-reviewer": "verification",
+            "debugger": "code",
+            "researcher": "read",
+            "planner": "decision",
+            "project-manager": "decision",
+            "test-writer": "code",
         }
         scratchpad.append_step(step.id, step.worker, "done", result,
                                step_type=_type_map.get(step.worker, "output"))
