@@ -464,7 +464,8 @@ class AIAgent:
             "- If you introduce errors, fix them.\n"
             "- Do NOT revert changes unless the user asks or the change broke something.\n\n"
             "## Task Completion\n"
-            "- When a task needs multiple turns, just keep going. The system handles continuation.\n"
+            "- Sending a progress update or asking a question does NOT complete the task. Keep working.\n"
+            "- Only stop calling tools when you have fully delivered the final result.\n"
             "- When fully done, deliver the result clearly. No special markers needed."
         ),
         fts_limit: int = 5,
