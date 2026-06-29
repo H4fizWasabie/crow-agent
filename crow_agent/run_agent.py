@@ -913,6 +913,26 @@ class AIAgent:
             else:
                 # Only clear checkpoint on a real response
                 _clear_checkpoint(self.session_id)
+
+            # Honesty check: if response sounds verified but no read tools were used
+            if full_content.strip() and all_tool_calls:
+                _sounds_like_claim = any(phrase in full_content.lower() for phrase in
+                    ["i checked", "i verified", "the file says", "i looked at",
+                     "i read", "the system shows", "according to", "i can confirm",
+                     "i found that", "the data shows"])
+                _used_read_tool = any(
+                    tc.get("function", {}).get("name", "") in
+                    ("read_file", "grep_files", "run_cmd", "list_dir",
+                     "git_status", "git_diff", "git_log")
+                    for tc in all_tool_calls
+                )
+                if _sounds_like_claim and not _used_read_tool:
+                    logger.warning("Honesty check: claimed verification without read tools")
+                    full_content += (
+                        "\n\n⚠️ *Note: I made claims above but haven't verified them "
+                        "with tools. Let me know if you want me to check anything.*"
+                    )
+
             final_text = finalize_turn(
                 self,
                 final_text=full_content,
@@ -1197,6 +1217,26 @@ class AIAgent:
                 logger.warning("Empty response guarded — fallback: %s", response.content[:80])
             else:
                 _clear_checkpoint(self.session_id)
+
+            # Honesty check: if response sounds verified but no read tools were used
+            if response.content.strip() and tool_calls:
+                _sounds_like_claim = any(phrase in response.content.lower() for phrase in
+                    ["i checked", "i verified", "the file says", "i looked at",
+                     "i read", "the system shows", "according to", "i can confirm",
+                     "i found that", "the data shows"])
+                _used_read_tool = any(
+                    tc.get("function", {}).get("name", "") in
+                    ("read_file", "grep_files", "run_cmd", "list_dir",
+                     "git_status", "git_diff", "git_log")
+                    for tc in tool_calls
+                )
+                if _sounds_like_claim and not _used_read_tool:
+                    logger.warning("Honesty check: claimed verification without read tools")
+                    response.content += (
+                        "\n\n⚠️ *Note: I made claims above but haven't verified them "
+                        "with tools. Let me know if you want me to check anything.*"
+                    )
+
             final_text = finalize_turn(
                 self,
                 final_text=response.content,
