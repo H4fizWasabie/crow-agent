@@ -831,14 +831,9 @@ class HeartbeatEngine:
                         + "\n".join(f"  \u2705 {d[:200]}" for d in discoveries[-3:]) + "\n\n"
                         f"Continue with the next step."
                     )
-                from .toolsets import ToolRegistry as _TR
-                _tools = _TR()
-                from .tool_executor import _TOOL_FUNCTIONS
-                for _n, _fn in _TOOL_FUNCTIONS.items():
-                    _tools.register(_fn)
                 _result = await _loop.run_in_executor(
                     None, run_child_task,
-                    profile, _task, _agent_provider, _tools,
+                    profile, _task, _agent_provider, self._tools,
                 )
                 final_output = _result
                 tool_calls = []
@@ -846,6 +841,7 @@ class HeartbeatEngine:
                 agent = AIAgent(
                     session_id=sid,
                     provider=_agent_provider,
+                    tool_registry=self._tools,
                     identity=(
                         "Autonomous action agent. "
                         f"Current task: {goal}\n\n"
@@ -946,7 +942,7 @@ class HeartbeatEngine:
             logger.info("Initiative #%s turn %d finished: %s", iid, turn_count, goal[:80])
 
         except Exception as e:
-            logger.error("Initiative #%s crashed: %s", iid, e)
+            logger.error("Initiative #%s crashed: %s", iid, exc, exc_info=True)
             _save_checkpoint(sid, goal, 0, [], f"Crashed: {e}")
             import json, pathlib as _pl
             _fp = _pl.Path.home() / ".crow_agent" / "active_tasks" / f"{sid}.json"
