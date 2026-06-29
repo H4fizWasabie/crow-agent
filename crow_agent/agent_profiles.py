@@ -27,7 +27,7 @@ from typing import Any
 import yaml
 
 from .paths import PROJECT_ROOT
-from .providers import ChatMessage
+from .providers import ChatMessage, ChatResponse
 from .run_agent import execute_tool_call
 
 logger = logging.getLogger("crow_agent.team")
@@ -230,6 +230,17 @@ def run_child_task(
             execute_tool_call(tc, tools, messages)
 
         response = provider.chat(messages, tools=schemas or None)
+
+    # Guard: empty response from provider — treat as error for crew retry
+    if response and not response.content.strip():
+        logger.warning("Worker returned empty response (finish=%s)", response.finish_reason)
+        response = ChatResponse(
+            content="Error: Worker produced no output — provider returned empty response.",
+            tool_calls=[],
+            finish_reason=response.finish_reason or "error",
+            usage={"prompt_tokens": response.usage.get("prompt_tokens", 0),
+                   "completion_tokens": response.usage.get("completion_tokens", 0)},
+        )
 
     # Persist turn if worker has session
     if session_id and db:

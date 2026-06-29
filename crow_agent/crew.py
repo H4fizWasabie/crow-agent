@@ -246,57 +246,63 @@ def get_worker_provider(
     Strategy: per-profile primary → pool fallback.
     If primary fails, round-robin through other available providers.
     """
-    from .providers import resolve_provider
+    from .providers import resolve_provider, FallbackProvider
 
     primaries = profile_primaries or _DEFAULT_PROFILE_PRIMARIES
 
     # Parse provider/model_id format (Ren fleet: "openrouter/qwen/qwen3-coder:free")
     primary_ref = primaries.get(profile_name)
-    provider_name = primary_ref
-    model_override = None
+    fb_primary_name = primary_ref
+    fb_primary_model = None
     if primary_ref and "/" in primary_ref:
-        provider_name, model_override = primary_ref.split("/", 1)
+        fb_primary_name, fb_primary_model = primary_ref.split("/", 1)
 
-    # Try primary first
-    if provider_name:
+    # Resolve primary provider
+    primary_provider = None
+    if fb_primary_name:
         try:
-            return resolve_provider(
-                provider_name,
-                model=model_override,
+            primary_provider = resolve_provider(
+                fb_primary_name,
+                model=fb_primary_model,
                 provider_manager=provider_manager,
             )
-        except Exception:
-            logger.warning(
-                "Worker primary '%s' for profile '%s' failed, trying fallback",
-                primary_ref, profile_name,
-            )
+        except Exception as exc:
+            logger.warning("Worker primary '%s' failed to resolve: %s", primary_ref, exc)
 
-    # Per-profile fallback
-    fallback_ref = _DEFAULT_PROFILE_FALLBACKS.get(profile_name)
-    if fallback_ref:
-        fb_provider, fb_model = (fallback_ref.split("/", 1) if "/" in fallback_ref else (fallback_ref, None))
+    # Resolve fallback provider
+    fb_ref = _DEFAULT_PROFILE_FALLBACKS.get(profile_name)
+    fb_provider = None
+    if fb_ref:
+        fb_name, fb_model = (fb_ref.split("/", 1) if "/" in fb_ref else (fb_ref, None))
         try:
-            return resolve_provider(
-                fb_provider,
-                model=fb_model,
-                provider_manager=provider_manager,
-            )
-        except Exception:
-            logger.warning(
-                "Worker fallback '%s' for profile '%s' failed, trying pool",
-                fallback_ref, profile_name,
-            )
+            fb_provider = resolve_provider(fb_name, model=fb_model, provider_manager=provider_manager)
+        except Exception as exc:
+            logger.warning("Worker fallback '%s' failed to resolve: %s", fb_ref, exc)
 
     # Pool fallback: try any available provider
-    all_entries = provider_manager.all_entries()
-    for entry in all_entries:
-        try:
-            return resolve_provider(entry.name, provider_manager=provider_manager)
-        except Exception:
-            continue
+    pool_provider = None
+    if not primary_provider and not fb_provider:
+        all_entries = provider_manager.all_entries()
+        for entry in all_entries:
+            try:
+                pool_provider = resolve_provider(entry.name, provider_manager=provider_manager)
+                break
+            except Exception:
+                continue
 
-    # Last resort: raise
-    raise RuntimeError(f"No available provider for worker profile '{profile_name}'")
+    # Wrap in FallbackProvider so runtime errors (502, 429) auto-fallback
+    if primary_provider and fb_provider:
+        return FallbackProvider(primary_provider, fb_provider)
+    elif primary_provider and pool_provider:
+        return FallbackProvider(primary_provider, pool_provider)
+    elif primary_provider:
+        return primary_provider
+    elif fb_provider:
+        return fb_provider
+    elif pool_provider:
+        return pool_provider
+    else:
+        raise RuntimeError(f"No available provider for worker profile '{profile_name}'")
 
 
 # Default profile → provider mapping (overridable)
