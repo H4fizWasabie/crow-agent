@@ -555,9 +555,6 @@ class AIAgent:
         self._turn_count = 0
         # Foreman: crew task monitoring (Phase 9) — set externally via app.py
         self._foreman: Any | None = None
-        # Option C: read-lock — track consecutive reads, lock after N
-        self._read_streak: int = 0
-        self._READ_STREAK_MAX = 3
 
     @property
     def db(self) -> CrowState:
@@ -621,52 +618,13 @@ class AIAgent:
 
         return messages
 
-    def _get_tools(self, filter_reads: bool = False) -> list | None:
-        """Return tool schemas. Activates lazy extensions based on trigger prompt.
-
-        When filter_reads=True (read-lock active), read-type tools are excluded.
-        """
+    def _get_tools(self) -> list | None:
+        """Return tool schemas. Activates lazy extensions based on trigger prompt."""
         if hasattr(self, '_last_trigger') and self._last_trigger:
             activated = self.tools.activate_extensions(self._last_trigger)
             if activated:
                 logger.info("Activated %d lazy extension(s)", activated)
-        schemas = self.tools.all_schemas() or None
-        if schemas and filter_reads:
-            from .tool_executor import _is_read_tool
-            filtered = []
-            for s in schemas:
-                name = s.get("function", {}).get("name", "")
-                if not _is_read_tool(name, "{}"):
-                    filtered.append(s)
-            if filtered:
-                logger.warning("Read-lock: %d read tools filtered, %d write tools available",
-                              len(schemas) - len(filtered), len(filtered))
-                return filtered
-            return schemas  # don't return empty — all tools filtered is worse
-        return schemas
-
-    def _get_tools_filtered(self) -> list | None:
-        """Get tool schemas with read-lock applied when streak exceeds limit."""
-        return self._get_tools(filter_reads=(self._read_streak >= self._READ_STREAK_MAX))
-
-    def _update_read_streak(self, tool_calls: list[dict[str, Any]]) -> None:
-        """Update read streak counter after tool execution."""
-        from .tool_executor import _is_read_tool
-        batch_has_write = False
-        for tc in tool_calls:
-            name = tc.get("function", {}).get("name", "")
-            args = tc.get("function", {}).get("arguments", "{}")
-            if not _is_read_tool(name, args):
-                batch_has_write = True
-                break
-        if batch_has_write:
-            if self._read_streak > 0:
-                logger.info("Read-lock: streak reset by write (was %d)", self._read_streak)
-            self._read_streak = 0
-        else:
-            self._read_streak += 1
-            if self._read_streak >= self._READ_STREAK_MAX:
-                logger.warning("Read-lock ACTIVE streak=%d — reads filtered", self._read_streak)
+        return self.tools.all_schemas() or None
 
     def _inject_daily_report(self, messages: list) -> None:
         """Prepend today's daily AI report if not yet shown this session."""
@@ -767,11 +725,6 @@ class AIAgent:
         self.state = State.IDLE
         mark_user_active()
 
-        # Reset read-lock streak per turn
-        if self._read_streak != 0:
-            logger.warning("Read-lock streak non-zero at turn start (was %d) — resetting", self._read_streak)
-        self._read_streak = 0
-
         try:
             _turn_start = time.monotonic()
             messages = self._prepare_turn(trigger)
@@ -827,7 +780,7 @@ class AIAgent:
                 messages.append(ChatMessage(role="system", content=_LOOP_EXECUTE_REMINDER))
                 _loop = asyncio.get_running_loop()
                 resp = await _loop.run_in_executor(
-                    None, self._provider.chat, messages, self._get_tools_filtered()
+                    None, self._provider.chat, messages, self._get_tools()
                 )
                 full_content, tool_calls = _merge_text_tools(resp.content, resp.tool_calls)
                 total_prompt += resp.usage.get("prompt_tokens", 0)
@@ -891,27 +844,10 @@ class AIAgent:
                     None, self._execute_tool_calls, tool_calls, messages
                 )
                 all_tool_calls.extend(tc)
-                # Option C: update read streak
-                self._update_read_streak(tc)
                 # Checkpoint: save every 3 rounds for crash recovery
                 if _loop_round % 3 == 0:
                     _tool_names = [t.get("function", {}).get("name", "?") for t in tc if t]
                     _save_checkpoint(self.session_id, _user_goal, _loop_round, _tool_names, full_content)
-                # Read-lock hard stop: force-break at streak >= READ_STREAK_MAX * 3 (Ren parity)
-                if self._read_streak >= self._READ_STREAK_MAX * 3:
-                    logger.warning("Read-lock hard stop (async): streak=%d", self._read_streak)
-                    et = get_error_tracker()
-                    result = et.record("read_lock", f"streak={self._read_streak}, round={_loop_round}")
-                    if result["escalate"]:
-                        full_content = (
-                            "[DONE] Task stopped — research loop limit reached. "
-                            f"After {result['count']} attempts the read-lock backstop fired. "
-                            "Try a different approach or ask me more specifically."
-                        )
-                    else:
-                        full_content = "[CONTINUE] Read-lock engaged. Task will resume on next heartbeat."
-                    tool_calls = None
-                    break
 
                 if abort:
                     et = get_error_tracker()
@@ -934,7 +870,7 @@ class AIAgent:
 
                 # Call LLM for next round (async)
                 resp = await _loop.run_in_executor(
-                    None, self._provider.chat, messages, self._get_tools_filtered()
+                    None, self._provider.chat, messages, self._get_tools()
                 )
                 full_content, tool_calls = _merge_text_tools(resp.content, resp.tool_calls)
                 total_prompt += resp.usage.get("prompt_tokens", 0)
@@ -948,7 +884,7 @@ class AIAgent:
                     messages.append(ChatMessage(role="assistant", content=full_content))
                     messages.append(ChatMessage(role="system", content=_POST_TOOL_NUDGE_1))
                     resp = await _loop.run_in_executor(
-                        None, self._provider.chat, messages, self._get_tools_filtered()
+                        None, self._provider.chat, messages, self._get_tools()
                     )
                     full_content, tool_calls = _merge_text_tools(resp.content, resp.tool_calls)
                     total_prompt += resp.usage.get("prompt_tokens", 0)
@@ -1103,11 +1039,6 @@ class AIAgent:
         self.state = State.IDLE
         mark_user_active()
 
-        # Reset read-lock streak per turn
-        if self._read_streak != 0:
-            logger.warning("Read-lock streak non-zero at turn start (was %d) — resetting", self._read_streak)
-        self._read_streak = 0
-
         try:
             _turn_start = time.monotonic()
             messages = self._prepare_turn(trigger)
@@ -1139,7 +1070,7 @@ class AIAgent:
                 if response.content:
                     messages.append(ChatMessage(role="assistant", content=response.content))
                 messages.append(ChatMessage(role="system", content=_LOOP_EXECUTE_REMINDER))
-                resp = self._provider.chat(messages=messages, tools=self._get_tools_filtered())
+                resp = self._provider.chat(messages=messages, tools=self._get_tools())
                 response.content, response.tool_calls = _merge_text_tools(
                     resp.content, resp.tool_calls
                 )
@@ -1201,27 +1132,10 @@ class AIAgent:
                 tc, consecutive_failures, last_error, abort = self._execute_tool_calls(
                     response.tool_calls, messages)
                 all_tool_calls.extend(tc)
-                # Option C: update read streak
-                self._update_read_streak(tc)
                 # Checkpoint: save every 3 rounds for crash recovery
                 if _loop_round % 3 == 0:
                     _tool_names = [t.get("function", {}).get("name", "?") for t in tc if t]
                     _save_checkpoint(self.session_id, _user_goal, _loop_round, _tool_names, response.content)
-                # Read-lock hard stop: force-break at streak >= READ_STREAK_MAX * 3 (Ren parity)
-                if self._read_streak >= self._READ_STREAK_MAX * 3:
-                    logger.warning("Read-lock hard stop: streak=%d", self._read_streak)
-                    et = get_error_tracker()
-                    result = et.record("read_lock", f"streak={self._read_streak}, round={_loop_round}")
-                    if result["escalate"]:
-                        response.content = (
-                            "[DONE] Task stopped — research loop limit reached. "
-                            f"After {result['count']} attempts the read-lock backstop fired. "
-                            "Try a different approach or ask me more specifically."
-                        )
-                    else:
-                        response.content = "[CONTINUE] Read-lock engaged. Task will resume on next heartbeat."
-                    response.tool_calls = None
-                    break
 
                 if abort:
                     et = get_error_tracker()
@@ -1243,7 +1157,7 @@ class AIAgent:
                     ))
 
                 self.state = State.CALL
-                response = self._provider.chat(messages=messages, tools=self._get_tools_filtered())
+                response = self._provider.chat(messages=messages, tools=self._get_tools())
                 response.content, response.tool_calls = _merge_text_tools(
                     response.content, response.tool_calls
                 )
@@ -1261,7 +1175,7 @@ class AIAgent:
                     # Empty response — nudge once
                     messages.append(ChatMessage(role="assistant", content=response.content))
                     messages.append(ChatMessage(role="system", content=_POST_TOOL_NUDGE_1))
-                    response = self._provider.chat(messages=messages, tools=self._get_tools_filtered())
+                    response = self._provider.chat(messages=messages, tools=self._get_tools())
                     response.content, response.tool_calls = _merge_text_tools(
                         response.content, response.tool_calls
                     )
