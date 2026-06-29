@@ -311,12 +311,12 @@ def get_worker_provider(
 _DEFAULT_PROFILE_PRIMARIES: dict[str, str] = {
     # New 5-profile system
     "architect": "opencode-zen-1/nemotron-3-ultra-free",
-    "deep-worker": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+    "deep-worker": "opencode-zen-1/nemotron-3-ultra-free",
     "code-worker": "opencode-zen-2/big-pickle",
     "verifier": "opencode-zen-3/mimo-v2.5-free",
     "web-reader": "openrouter/google/gemma-4-31b-it:free",
     # Old name aliases
-    "researcher": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+    "researcher": "opencode-zen-1/nemotron-3-ultra-free",
     "code-reviewer": "opencode-zen-2/big-pickle",
     "debugger": "opencode-zen-3/mimo-v2.5-free",
     "planner": "opencode-zen-1/nemotron-3-ultra-free",
@@ -327,40 +327,17 @@ _DEFAULT_PROFILE_PRIMARIES: dict[str, str] = {
 # Per-profile fallback (tried before falling through to pool)
 _DEFAULT_PROFILE_FALLBACKS: dict[str, str] = {
     "architect": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
-    "deep-worker": "opencode-zen-1/nemotron-3-ultra-free",
+    "deep-worker": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
     "code-worker": "opencode-zen/deepseek-v4-flash-free",
     "verifier": "opencode-zen-4/north-mini-code-free",
+    # Old name aliases
+    "researcher": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+    "code-reviewer": "opencode-zen/deepseek-v4-flash-free",
+    "debugger": "opencode-zen-4/north-mini-code-free",
+    "planner": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+    "project-manager": "opencode-zen-1/nemotron-3-ultra-free",
+    "test-writer": "opencode-zen/deepseek-v4-flash-free",
 }
-
-
-# ── Classification ────────────────────────────────────────────────
-
-
-def classify_complexity(
-    user_input: str,
-    provider: Any,  # BaseProvider
-) -> bool:
-    """Quick classification: does this request need crew orchestration?
-
-    Makes one cheap API call. Returns True if crew is warranted.
-    """
-    from .providers import ChatMessage
-
-    prompt = (
-        "You are a task classifier. Always respond in English only. Never use Chinese characters. Determine if this request requires multi-step "
-        "orchestration with multiple specialized agents (research + code + review).\n\n"
-        "Answer ONLY 'yes' or 'no'.\n\n"
-        f"Request: {user_input[:500]}"
-    )
-    try:
-        resp = provider.chat(
-            messages=[ChatMessage(role="user", content=prompt)],
-            max_tokens=10,
-        )
-        return resp.content.strip().lower().startswith("yes")
-    except Exception:
-        logger.warning("Complexity classification failed, defaulting to single-agent")
-        return False
 
 
 # ── Decomposition ─────────────────────────────────────────────────
