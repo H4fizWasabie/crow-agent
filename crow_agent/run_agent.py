@@ -1258,6 +1258,15 @@ class AIAgent:
             )
 
             self.state = State.IDLE
+
+            # Auto-resume: if heartbeat initiative not done, immediately continue
+            if (trigger.source == TriggerSource.HEARTBEAT
+                    and "[DONE]" not in final_text
+                    and all_tool_calls
+                    and _loop_round < _LOOP_HARD_CEILING - 1):
+                logger.info("Auto-resuming initiative — task incomplete, tools used")
+                return self.run(trigger)
+
             return final_text
 
         except Exception:

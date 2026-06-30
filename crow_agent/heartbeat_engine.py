@@ -320,17 +320,7 @@ class HeartbeatEngine:
                 cp = json.loads(cp_path.read_text())
                 if cp.get("status") in ("waiting",):
                     goal = cp.get("goal", "Resume task")
-                    retry_count = cp.get("retry_count", 0)
-                    if retry_count >= 3:
-                        logger.warning("Initiative %s exhausted retries (3) — notifying user", cp.get("session_id", "?"))
-                        await self._notify(ContextDelta(
-                            short_summary=f"Task stuck: {goal[:100]}",
-                            summary=f"Crow tried 3 times but couldn't complete:\n\n{goal[:300]}",
-                        ))
-                        cp["status"] = "stuck"
-                        cp_path.write_text(json.dumps(cp, indent=2))
-                        continue
-                    logger.info("Heartbeat rescuing initiative %s (retry %d)", cp.get("session_id", "?"), retry_count)
+                    logger.info("Heartbeat rescuing initiative %s", cp.get("session_id", "?"))
                     await self._spawn_initiative(goal, initiative_id=cp.get("session_id", "").replace("initiative_", ""))
                     rescued += 1
             except (json.JSONDecodeError, OSError) as e:
