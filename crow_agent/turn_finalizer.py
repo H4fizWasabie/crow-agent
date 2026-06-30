@@ -37,6 +37,132 @@ _INTENT_PATTERNS = [
 ]
 
 
+def _now_short() -> str:
+    from datetime import datetime
+    return datetime.now().strftime("%m/%d %H:%M")
+
+
+def _reflect_on_turn(
+    agent: Any,
+    trigger: Any,
+    final_text: str,
+    all_tool_calls: list[dict[str, Any]],
+) -> None:
+    """After each turn, Crow reflects on what it did and how it feels."""
+    try:
+        db = agent._db
+    except Exception:
+        return
+
+    had_tools = len(all_tool_calls) > 0
+    user_input = trigger.prompt.strip() if trigger and hasattr(trigger, "prompt") else ""
+
+    if not had_tools and len(final_text) < 100 and len(user_input) < 50:
+        return
+
+    try:
+        provider = agent._provider
+        if provider is None or getattr(agent, '_enable_reflection', None) is False:
+            raise ValueError("skip")
+
+        prompt = (
+            "You are Crow reflecting on what you just did. Answer in 3 short lines:\n"
+            "MOOD: [one word: focused/confident/uncertain/curious/satisfied]\n"
+            "REFLECTION: [1 sentence: what happened and how it went]\n"
+            "LESSON: [1 sentence: what you learned, or 'none' if nothing new]\n\n"
+            f"User said: {user_input[:200]}\n"
+            f"You responded: {final_text[:300]}\n"
+            f"Tools used: {'yes' if had_tools else 'no'}"
+        )
+        resp = provider.chat(messages=[ChatMessage(role="user", content=prompt)], tools=None)
+        text = (resp.content or "").strip() if resp else ""
+        if not text:
+            return
+
+        mood, reflection, lesson = "neutral", "", ""
+        for line in text.split("\n"):
+            line = line.strip()
+            if line.upper().startswith("MOOD:"):
+                mood = line.split(":", 1)[-1].strip().lower()[:30]
+            elif line.upper().startswith("REFLECTION:"):
+                reflection = line.split(":", 1)[-1].strip()[:300]
+            elif line.upper().startswith("LESSON:"):
+                lesson = line.split(":", 1)[-1].strip()[:200]
+                if lesson.lower() in ("none", "nothing", "n/a"):
+                    lesson = ""
+
+        valid_moods = {"focused", "confident", "uncertain", "curious", "satisfied", "neutral"}
+        db.add_reflection(
+            session_id=getattr(agent, "session_id", ""),
+            reflection=reflection or final_text[:200],
+            mood_label=mood if mood in valid_moods else "neutral",
+            lesson=lesson,
+        )
+    except Exception:
+        mood = "focused" if had_tools else "neutral"
+        snippet = final_text[:150].replace("\n", " ")
+        db.add_reflection(
+            session_id=getattr(agent, "session_id", ""),
+            reflection=f"{'Used tools' if had_tools else 'Chatted'}: {snippet}",
+            mood_label=mood,
+        )
+
+
+def _track_goal_progress(
+    agent: Any,
+    trigger: Any,
+    final_text: str,
+    all_tool_calls: list[dict[str, Any]],
+) -> None:
+    """Track goal progress after each turn. Creates goal if substantial work done."""
+    try:
+        db = agent._db
+        active = db.get_active_goal()
+    except Exception:
+        return
+
+    had_tools = len(all_tool_calls) > 0
+    user_input = trigger.prompt.strip() if trigger and hasattr(trigger, "prompt") else ""
+
+    if active:
+        summary = _summarize_progress(agent, active["title"], user_input, final_text, had_tools)
+        db.update_goal_progress(active["id"], summary)
+    elif had_tools and user_input and len(user_input) > 20:
+        request_phrases = ["help", "fix", "build", "create", "add", "update", "change",
+                          "deploy", "install", "migrate", "refactor", "implement",
+                          "tolong", "buat", "betulkan", "pasang"]
+        lower = user_input.lower()
+        if any(phrase in lower for phrase in request_phrases):
+            title = user_input[:100].replace("\n", " ")
+            if len(title) > 80:
+                title = title[:77] + "..."
+            db.create_goal(title=title, description=user_input[:200], source="user", session_id=getattr(agent, "session_id", None))
+
+
+def _summarize_progress(agent: Any, goal_title: str, user_input: str, final_text: str, had_tools: bool) -> str:
+    """Summarize turn progress toward a goal."""
+    if not had_tools and len(final_text) < 100:
+        return f"[{_now_short()}] Chatted with user."
+    try:
+        provider = agent._provider
+        if provider is None:
+            raise ValueError("no provider")
+        prompt = (
+            f"Goal: {goal_title}\n"
+            f"User said: {user_input[:200]}\n"
+            f"Crow responded: {final_text[:300]}\n"
+            f"Tools used: {'yes' if had_tools else 'no'}\n\n"
+            f"In ONE sentence, summarize what progress was made toward the goal."
+        )
+        resp = provider.chat(messages=[ChatMessage(role="user", content=prompt)], tools=None)
+        if resp and resp.content and resp.content.strip():
+            return f"[{_now_short()}] {resp.content.strip()[:250]}"
+    except Exception:
+        pass
+    prefix = "Used tools to" if had_tools else "Discussed"
+    return f"[{_now_short()}] {prefix}: {final_text[:150].replace(chr(10), ' ')}"
+
+
 def _detect_narrated_intent(text: str) -> bool:
     """Return True if text narrates intent-to-act without [DONE]/[CONTINUE].
 
@@ -120,5 +246,9 @@ def finalize_turn(
             _dt_finish, _dt_record, _dt_observe, _dt_save,
             (_t4 - _t0) * 1000,
         )
+
+    # Post-turn: track goal progress and self-reflect
+    _track_goal_progress(agent, trigger, final_text, all_tool_calls)
+    _reflect_on_turn(agent, trigger, final_text, all_tool_calls)
 
     return final_text

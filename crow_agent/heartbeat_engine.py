@@ -141,6 +141,7 @@ class HeartbeatEngine:
         ) if db else CrewScratchpadDB(":memory:")
         self._foreman = Foreman(scratchpad=self._scratchpad)
         self._last_foreman_tick: float = 0
+        self._last_goal_cleanup: float = 0
 
         self._autonomous_sid = "__autonomous__"
         self._session_ready = False
@@ -282,6 +283,16 @@ class HeartbeatEngine:
                 self._last_foreman_tick = time.time()
                 try:
                     self._foreman.tick()
+                except Exception:
+                    pass
+
+            # Goal cleanup: abandon stale goals hourly
+            if time.time() - self._last_goal_cleanup >= 3600:
+                self._last_goal_cleanup = time.time()
+                try:
+                    n = self._db.abandon_stale_goals(days=7)
+                    if n > 0:
+                        logger.info("Abandoned %d stale goal(s)", n)
                 except Exception:
                     pass
 

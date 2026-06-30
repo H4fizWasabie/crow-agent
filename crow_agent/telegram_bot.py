@@ -268,6 +268,7 @@ class TelegramBot:
             # Tool icons for status messages
             _tool_icons = {
                 "web_search": "🔍 Searching",
+                "web_crawl": "🌐 Crawling",
                 "web_fetch": "📄 Fetching",
                 "read_file": "📖 Reading",
                 "grep_files": "🔎 Grepping",
