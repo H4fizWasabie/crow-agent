@@ -908,7 +908,16 @@ class AIAgent:
                             _tool_names.append(n)
                     _save_checkpoint(self.session_id, _user_goal, _loop_round, _tool_names, "LLM went silent after tools")
                 else:
-                    full_content = "Idle. No active tasks."
+                    if trigger.source == TriggerSource.USER:
+                        # Model ghosted on a user message — retry with minimal context
+                        slim = [
+                            ChatMessage(role="system", content="You are Crow, a warm and capable AI companion. The user said something to you. Respond naturally, like a human friend would."),
+                            ChatMessage(role="user", content=trigger.prompt[-500:]),
+                        ]
+                        resp = self._provider.chat(messages=slim, tools=None)
+                        full_content = resp.content or "Hey. I'm here. What's on your mind?"
+                    else:
+                        full_content = "Idle. No active tasks."
                 logger.warning("Empty response guarded — fallback: %s", full_content[:80])
             else:
                 # Only clear checkpoint on a real response

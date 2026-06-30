@@ -156,6 +156,13 @@ def register_builtins(
         lambda r: _load_extension(r, "youtube_transcribe"),
     )
 
+    # Lazy extension: crawl4ai (JS-rendered web crawling)
+    try:
+        from extensions.crawl4ai import register_tools as _register_crawl4ai
+        _register_crawl4ai(registry)
+    except ImportError:
+        pass  # crawl4ai not installed, skip
+
 
 def _load_extension(registry: ToolRegistry, ext_name: str) -> None:
     """Load a single extension by name. Best-effort."""

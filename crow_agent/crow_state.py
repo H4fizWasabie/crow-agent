@@ -267,6 +267,38 @@ class CrowState:
         )
         self._maybe_commit()
 
+        # Goals — Crow's self-directed persistent objectives
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS goals (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'self' CHECK(source IN ('user','self','heartbeat')),
+                priority TEXT DEFAULT 'medium' CHECK(priority IN ('low','medium','high')),
+                status TEXT DEFAULT 'active' CHECK(status IN ('active','paused','done','abandoned')),
+                progress_summary TEXT DEFAULT '',
+                parent_initiative_id TEXT DEFAULT NULL,
+                session_id TEXT DEFAULT NULL,
+                created_at TEXT DEFAULT (datetime('now')),
+                last_active_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        self._maybe_commit()
+
+        # Self journal — Crow's persistent self-awareness narrative
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS self_journal (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT,
+                reflection TEXT NOT NULL DEFAULT '',
+                mood_label TEXT DEFAULT 'neutral',
+                lesson TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        self._maybe_commit()
+
         # Run stamp-based migration (applies any pending _MIGRATIONS entries)
         _migrate(self._conn, self._lock)
 
@@ -755,3 +787,120 @@ class CrowState:
             cur = self._conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
             self._maybe_commit()
         return cur.rowcount > 0
+
+    # ── Self journal ──
+
+    def add_reflection(self, session_id: str = "", reflection: str = "",
+                       mood_label: str = "neutral", lesson: str = "") -> int:
+        """Add a self-reflection entry. Returns the row id."""
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO self_journal (session_id, reflection, mood_label, lesson) VALUES (?, ?, ?, ?)",
+                (session_id, reflection, mood_label, lesson),
+            )
+            self._maybe_commit()
+            return cur.lastrowid
+
+    def get_recent_reflections(self, limit: int = 5) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM self_journal ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [dict(r) for r in reversed(rows)]
+
+    def get_current_mood(self) -> str:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT mood_label FROM self_journal ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        return row["mood_label"] if row else "neutral"
+
+    def get_recent_lessons(self, limit: int = 5) -> list[str]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT lesson FROM self_journal WHERE lesson != '' ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [r["lesson"] for r in rows]
+
+    # ── Goals system ──
+
+    def create_goal(self, title: str, description: str = "", source: str = "self",
+                    priority: str = "medium", session_id: str | None = None,
+                    initiative_id: str | None = None) -> str:
+        import uuid
+        goal_id = f"goal_{uuid.uuid4().hex[:12]}"
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO goals (id, title, description, source, priority, parent_initiative_id, session_id)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (goal_id, title, description, source, priority, initiative_id, session_id),
+            )
+            self._maybe_commit()
+        logger.info("Goal created: %s [%s]", title[:60], goal_id[:16])
+        return goal_id
+
+    def get_goal(self, goal_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM goals WHERE id = ?", (goal_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_active_goal(self) -> dict[str, Any] | None:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM goals WHERE status = 'active' ORDER BY last_active_at DESC LIMIT 10"
+            ).fetchall()
+        if not rows:
+            return None
+        priority_order = {"high": 0, "medium": 1, "low": 2}
+        rows.sort(key=lambda r: (priority_order.get(r["priority"], 99), r["last_active_at"] or ""))
+        return dict(rows[0]) if rows else None
+
+    def update_goal_progress(self, goal_id: str, summary: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE goals SET progress_summary = ?, last_active_at = datetime('now'),"
+                " updated_at = datetime('now') WHERE id = ?",
+                (summary, goal_id),
+            )
+            self._maybe_commit()
+
+    def pause_goal(self, goal_id: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE goals SET status = 'paused', updated_at = datetime('now') WHERE id = ?", (goal_id,)
+            )
+            self._maybe_commit()
+
+    def resume_goal(self, goal_id: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE goals SET status = 'active', last_active_at = datetime('now'),"
+                " updated_at = datetime('now') WHERE id = ?", (goal_id,)
+            )
+            self._maybe_commit()
+
+    def complete_goal(self, goal_id: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE goals SET status = 'done', updated_at = datetime('now') WHERE id = ?", (goal_id,)
+            )
+            self._maybe_commit()
+
+    def abandon_stale_goals(self, days: int = 7) -> int:
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE goals SET status = 'abandoned', updated_at = datetime('now')"
+                " WHERE status = 'active' AND last_active_at < datetime('now', ?)",
+                (f"-{days} days",),
+            )
+            self._maybe_commit()
+        return cur.rowcount
+
+    def list_goals(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM goals ORDER BY last_active_at DESC"
+            ).fetchall()
+        return [dict(r) for r in rows]
