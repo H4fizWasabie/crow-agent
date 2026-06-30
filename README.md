@@ -51,14 +51,31 @@ python -m venv .venv
 
 Any OpenAI-compatible API works. Set `{NAME}_API_KEY`, `{NAME}_BASE_URL`, `{NAME}_MODEL` — Crow auto-detects them.
 
-## What It Does
+## Features
 
-- **💬 Chat** — web UI, Telegram, or terminal
-- **⚡ Background tasks** — "Crow, research X and report back"
-- **⏰ Cron jobs** — scheduled reports, backups, recurring checks
-- **🧠 Memory** — learns from conversations, full-text search via FTS5
-- **🔧 Tools** — web search, file ops, git, image gen, speech-to-text, SSH, MCP, LSP, and more
-- **🔄 Failover** — if one LLM provider goes down, it tries another
+| Category | What it does |
+|----------|-------------|
+| **💬 Chat** | Web UI, Telegram, or terminal — full streaming, tool calls, memory |
+| **🎯 Goals** | Self-directed objectives — Crow creates, tracks, and persists goals across sessions |
+| **🧠 Self-Journal** | Mood tracking, reflection, and lesson learning after every turn |
+| **🔍 Sensors** | Background system monitoring — CPU, RAM, disk, file changes — injected as context |
+| **⚡ Background tasks** | "Crow, research X and report back" — delegated to specialist agents |
+| **⏰ Cron jobs** | Scheduled reports, backups, recurring checks |
+| **📋 Crew system** | Multi-agent orchestration — decompose, delegate, merge results |
+| **🚑 Crash recovery** | Checkpoint system — every 3 rounds saved, auto-resume on restart |
+| **🛡️ Failover** | Provider chains — when one LLM fails, next takes over transparently |
+| **🌐 Free LLM pool** | Use [FreeLLMAPI](https://github.com/tashfeenahmed/freellmapi) to aggregate 17 free tiers |
+| **🔧 31 Tools** | read/write/edit, run_cmd, web search/crawl, media, SSH, cron, MCP, more |
+| **🔄 Update checker** | Auto-notifies when a new version is available on startup |
+
+## What's New
+
+- **Goals system** — Crow creates and tracks self-directed objectives. Goals survive restarts and are injected into every turn's context. Progress updates automatically after each turn.
+- **Self-journal** — After each turn, Crow reflects on what it did (mood, reflection, lesson). Stored in SQLite, injected as `## Self` context.
+- **Background sensor** — Monitors CPU, RAM, disk usage, and file changes in watched directories. Injected as `## Surroundings` context so Crow sees system state.
+- **Checkpoint crash recovery** — Every 3 tool rounds, state is saved to `~/.crow_agent/active_tasks/`. If Crow crashes mid-task, it resumes automatically on next startup.
+- **Team profiles** — 6 specialized agent profiles (architect, code-worker, deep-worker, verifier, web-reader, heartbeat) with per-profile provider fallback chains.
+- **Honesty check** — If Crow claims verification ("I checked the file") without using read tools, it appends a warning.
 
 ## Interfaces
 
@@ -73,23 +90,36 @@ Any OpenAI-compatible API works. Set `{NAME}_API_KEY`, `{NAME}_BASE_URL`, `{NAME
 Every message runs through a state machine:
 
 ```
-RECALL → ASSEMBLE → LLM → TOOLS → RESPOND
+RECALL → ASSEMBLE → CALL → TOOL LOOP → RESPOND
 ```
 
-- **RECALL** — FTS5 search across conversation history + memory vault
-- **ASSEMBLE** — tiered context budget, 35K token cap
-- **TOOL LOOP** — agent executes tools autonomously, up to 12 rounds
-- **RESPOND** — saves to DB, updates memory, auto-verifies code changes
+- **RECALL** — FTS5 search across conversation history + memory vault + semantic embeddings
+- **ASSEMBLE** — Tiered context budget (120K tokens). Injects goals, self-awareness, surroundings, matched skills, budget notice
+- **CALL** — Initial LLM call with all context. Internal monologue (text without tools = thinking)
+- **TOOL LOOP** — Up to 999 rounds. Parallel batching suggested at round 2. Checkpoint saved every 3 rounds
+- **RESPOND** — Saves to DB, updates goal progress, self-reflection, skill extraction, session state save
 
-The agent uses **internal monologue** — text without tool calls is treated as thinking, not output. Crow keeps working until it has a real answer.
+The agent never narrates intent — if the next step is obvious, it executes it immediately.
 
-## Why Crow?
+### Crew Orchestration
 
-- **Single-user by design** — no auth, no workspaces, no billing pages
-- **BYO keys** — no subscription, no vendor lock
-- **Cost-aware** — cheap models for simple tasks, smarter ones for hard problems
-- **Follows through** — delegates background tasks and delivers results
-- **Flat architecture** — one Python process, no microservices, no layers
+For complex tasks (multiple files, building features, debugging), Crow decomposes the work:
+
+1. **Classify** — detect if task needs multiple specialists
+2. **Decompose** — break into dependency-ordered steps with worker profiles
+3. **Execute** — run workers in parallel via thread pool, each with its own provider and toolset
+4. **Merge** — synthesize results into a coherent report
+
+Workers log progress to an SQLite scratchpad monitored by the **Foreman** — embedding drift detection catches stalled workers.
+
+### Autonomous Heartbeat
+
+Crow runs a background loop every 10 minutes that:
+
+- **Observes** — git changes, task deadlines, cron failures, system health
+- **Decides** — uses a cheap LLM to classify what needs attention
+- **Acts** — spawns initiative turns for specialist agents (code-worker, debugger, researcher, etc.)
+- **Self-manages** — tracks its own mood, learns from mistakes, abandons stale goals
 
 ## Project Structure
 
@@ -99,17 +129,21 @@ The agent uses **internal monologue** — text without tool calls is treated as 
 ├── crow_agent/             # Core agent
 │   ├── run_agent.py        #   State machine orchestrator
 │   ├── providers.py        #   LLM provider abstraction + failover
-│   ├── crow_state.py       #   SQLite + FTS5 memory
-│   ├── cron_engine.py      #   Scheduled job runner
+│   ├── crow_state.py       #   SQLite + FTS5 memory + goals + journal
+│   ├── sensors.py          #   Background system monitoring
 │   ├── heartbeat_engine.py #   Autonomous background loop
 │   ├── crew.py             #   Multi-agent orchestration
+│   ├── foreman.py          #   Crew task monitoring + stall detection
+│   ├── scratchpad.py       #   SQLite crew task tracker
+│   ├── error_tracker.py    #   Recurring error tracking with escalation
+│   ├── update_checker.py   #   Auto-update notification
 │   ├── tools_*.py          #   Tool modules
 │   └── ...
 ├── templates/              # Jinja2 HTML
-├── tests/                  # pytest suite
+├── tests/                  # pytest suite (200+ tests)
 ├── skills/                 # Reusable agent workflows
-├── team/                   # Specialized agent profiles
-├── extensions/             # Optional plugins
+├── team/                   # 6 specialized agent profiles
+├── extensions/             # Optional plugins (crawl4ai, etc.)
 └── docs/adr/               # Architecture Decision Records
 ```
 
