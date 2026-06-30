@@ -64,7 +64,6 @@ Any OpenAI-compatible API works. Set `{NAME}_API_KEY`, `{NAME}_BASE_URL`, `{NAME
 | **📋 Crew system** | Multi-agent orchestration — decompose, delegate, merge results |
 | **🚑 Crash recovery** | Checkpoint system — every 3 rounds saved, auto-resume on restart |
 | **🛡️ Failover** | Provider chains — when one LLM fails, next takes over transparently |
-| **🌐 Free LLM pool** | Use [FreeLLMAPI](https://github.com/tashfeenahmed/freellmapi) to aggregate 17 free tiers |
 | **🔧 31 Tools** | read/write/edit, run_cmd, web search/crawl, media, SSH, cron, MCP, more |
 | **🔄 Update checker** | Auto-notifies when a new version is available on startup |
 
