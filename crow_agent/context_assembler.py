@@ -124,6 +124,57 @@ def assemble_context(
         ),
     })
 
+    # ── Active goal injection ──
+    if hasattr(db, "get_active_goal"):
+        active_goal = db.get_active_goal()
+        if active_goal:
+            goal_lines = [
+                "## Current Goal",
+                f"**{active_goal['title']}** [{active_goal['priority']}]",
+            ]
+            if active_goal.get("progress_summary"):
+                goal_lines.append(f"Progress: {active_goal['progress_summary'][:300]}")
+            if active_goal.get("description"):
+                goal_lines.append(f"Context: {active_goal['description'][:200]}")
+            system_content.append({"type": "text", "text": "\n".join(goal_lines)})
+
+    # ── Self-awareness injection (from self-journal) ──
+    try:
+        mood = db.get_current_mood()
+        reflections = db.get_recent_reflections(limit=3)
+        lessons = db.get_recent_lessons(limit=3)
+        self_lines = ["## Self"]
+        if mood and mood != "neutral":
+            self_lines.append(f"Mood: {mood}")
+        if reflections:
+            latest = reflections[-1]["reflection"][:200]
+            self_lines.append(f"Last reflection: {latest}")
+        if lessons:
+            recent_lessons = "; ".join(lessons[:2])
+            self_lines.append(f"Recent lessons: {recent_lessons}")
+        if len(self_lines) > 1:
+            system_content.append({"type": "text", "text": "\n".join(self_lines)})
+    except Exception:
+        pass
+
+    # ── Surroundings injection (from background sensor) ──
+    try:
+        from .sensors import get_sensor
+        sensor = get_sensor()
+        if sensor and sensor.running:
+            delta = sensor.get_context_delta()
+            lines = ["## Surroundings"]
+            if delta.get("alerts"):
+                lines.append("⚠️ " + " | ".join(delta["alerts"]))
+            if delta.get("snapshots"):
+                lines.append(delta["snapshots"][-1])
+            if delta.get("file_changes"):
+                lines.append("Recent file changes: " + "; ".join(delta["file_changes"][-3:]))
+            if len(lines) > 1:
+                system_content.append({"type": "text", "text": "\n".join(lines)})
+    except Exception:
+        pass
+
     # Budget-aware history truncation
     system_tokens = count_tokens(
         _flatten(system_content),
